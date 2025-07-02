@@ -1,4 +1,4 @@
-import { StateGraph } from '@langchain/langgraph';
+import { StateGraph, START, END } from '@langchain/langgraph';
 import fs from 'node:fs';
 import path from 'node:path';
 import PDFParser from 'pdf2json';
@@ -135,8 +135,8 @@ ${state.rawText.slice(0, 12000)}
     }
   }
 
-  // Create the graph
-  const workflow = new StateGraph<PDFState>({
+  // Create the graph with channels
+  const workflow = new StateGraph<PDFState, Partial<PDFState>>({
     channels: {
       path: null,
       rawText: null,
@@ -147,15 +147,15 @@ ${state.rawText.slice(0, 12000)}
   });
   
   // Add nodes
-  workflow.addNode('parse', parsePDF);
-  workflow.addNode('llm', callLLM);
-  workflow.addNode('rename', renameFile);
+  workflow.addNode('parse', parsePDF as any);
+  workflow.addNode('llm', callLLM as any);
+  workflow.addNode('rename', renameFile as any);
   
   // Add edges - define the flow
-  workflow.addEdge('__start__', 'parse');
-  workflow.addEdge('parse', 'llm');
-  workflow.addEdge('llm', 'rename');
-  workflow.addEdge('rename', '__end__');
+  workflow.addEdge(START, 'parse' as any);
+  workflow.addEdge('parse' as any, 'llm' as any);
+  workflow.addEdge('llm' as any, 'rename' as any);
+  workflow.addEdge('rename' as any, END);
   
   // Compile and return
   return workflow.compile();

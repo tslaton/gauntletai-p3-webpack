@@ -19,7 +19,7 @@ if (require('electron-squirrel-startup')) {
 const store = new Store();
 let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
-let watcher: chokidar.FSWatcher | null = null;
+let watcher: ReturnType<typeof chokidar.watch> | null = null;
 // Track renamed files to avoid processing them again
 const renamedFiles = new Set<string>();
 
@@ -269,12 +269,12 @@ async function processPDFFile(filePath: string) {
   mainWindow?.webContents.send('processing-update', { ...currentState });
   
   // Run the pipeline
-  const stream = await pipeline.stream(initialState);
+  const stream = await pipeline.stream(initialState as any);
   
   for await (const chunk of stream) {
     // Update state with each step's output
     const [nodeName, nodeOutput] = Object.entries(chunk)[0];
-    currentState = { ...currentState, ...nodeOutput } as PDFState;
+    currentState = { ...currentState, ...(nodeOutput as Partial<PDFState>) } as PDFState;
     
     // Map node names to status
     let status: string;
