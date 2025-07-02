@@ -2,11 +2,82 @@
 <html>
   <head>
     <meta charset="UTF-8" />
-    <title>Hello World!</title>
-
+    <title>File Wrangler</title>
   </head>
   <body>
-    <h1>💖 Hello World!</h1>
-    <p>Welcome to your Electron application.</p>
+    <div id="app">
+      <header class="header">
+        <h1>File Wrangler</h1>
+        <button id="settings-btn" class="settings-btn">⚙️ Settings</button>
+      </header>
+      
+      <!-- API Key Warning Banner -->
+      <div id="api-key-banner" class="api-key-banner hidden">
+        <div class="banner-content">
+          <span>⚠️ OpenAI API key is not set. Please configure it in Settings to enable PDF processing.</span>
+        </div>
+      </div>
+      
+      <main class="main">
+        <div class="watch-folder">
+          <h2>Watch Folder</h2>
+          <div class="folder-info">
+            <span id="folder-path" class="folder-path">Loading...</span>
+            <button id="open-folder" class="btn btn-primary">Open Folder</button>
+          </div>
+        </div>
+        
+        <div class="processing-list">
+          <h2>Recent Activity</h2>
+          <div id="activity-list" class="activity-list">
+            <p class="empty-state">Waiting for PDF files...</p>
+          </div>
+        </div>
+      </main>
+      
+      <!-- Settings Modal -->
+      <div id="settings-modal" class="modal hidden">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h2>Settings</h2>
+            <button id="close-settings" class="close-btn">&times;</button>
+          </div>
+          <div class="modal-body">
+            <div class="form-group">
+              <label for="watch-folder-input">Watch Folder</label>
+              <div class="input-group">
+                <input type="text" id="watch-folder-input" readonly>
+                <button id="select-folder" class="btn btn-secondary">Browse</button>
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <label for="api-key-input">OpenAI API Key</label>
+              <input type="password" id="api-key-input" placeholder="sk-...">
+            </div>
+            
+            <div class="form-group">
+              <label for="model-select">LLM Model</label>
+              <select id="model-select">
+                <option value="gpt-4.1-nano">GPT-4.1-nano</option>
+                <option value="gpt-4.1">GPT-4.1</option>
+              </select>
+            </div>
+            
+            <div class="form-group">
+              <label class="checkbox-label">
+                <input type="checkbox" id="lowercase-checkbox" checked>
+                <span>Use lowercase filenames</span>
+              </label>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button id="save-settings" class="btn btn-primary">Save Settings</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    
+    <script type="module" src="/src/renderer.ts"></script>
   </body>
 </html>
