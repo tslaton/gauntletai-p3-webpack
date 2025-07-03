@@ -27,6 +27,14 @@
           </div>
         </div>
         
+        <div class="organization-controls">
+          <h2>Organization</h2>
+          <div class="org-info">
+            <span id="inbox-count" class="inbox-count">0 files in inbox</span>
+            <button id="organize-now" class="btn btn-secondary">Organize Now</button>
+          </div>
+        </div>
+        
         <div class="processing-list">
           <h2>Recent Activity</h2>
           <div id="activity-list" class="activity-list">
@@ -81,6 +89,20 @@
                 <input type="checkbox" id="lowercase-checkbox" checked>
                 <span>Use lowercase filenames</span>
               </label>
+            </div>
+            
+            <div class="form-group">
+              <label class="checkbox-label">
+                <input type="checkbox" id="auto-organize-checkbox" checked>
+                <span>Auto-organize files</span>
+              </label>
+              <small class="form-help">Automatically organize files when inbox reaches threshold</small>
+            </div>
+            
+            <div class="form-group">
+              <label for="auto-organize-threshold">Auto-organize threshold</label>
+              <input type="number" id="auto-organize-threshold" min="1" max="100" value="10">
+              <small class="form-help">Number of files in inbox before auto-organization triggers</small>
             </div>
           </div>
           <div class="modal-footer">

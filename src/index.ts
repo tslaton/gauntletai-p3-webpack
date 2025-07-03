@@ -463,12 +463,12 @@ function scheduleAutoOrganize() {
     devLog('Auto-organize timer reset');
   }
   
-  // Set new timer for 5 seconds
+  // Set new timer for 10 seconds to ensure all files are processed
   autoOrganizeTimer = setTimeout(async () => {
     devLog('Auto-organize timer fired, checking inbox...');
     await checkAutoOrganize();
     autoOrganizeTimer = null;
-  }, 5000);
+  }, 10000);
 }
 
 // Check if auto-organization should run

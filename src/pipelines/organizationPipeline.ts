@@ -70,15 +70,37 @@ export function createOrganizationPipeline(
       const files = await fs.promises.readdir(inboxPath);
       const pdfFiles = files.filter(file => file.endsWith('.pdf'));
       
+      devLog(`Files in inbox: ${pdfFiles.join(', ')}`);
+      devLog(`Metadata keys: ${Object.keys(metadata).join(', ')}`);
+      
       // Filter metadata to only include files that exist in inbox
       const activeMetadata: Record<string, any> = {};
+      
+      // For files without metadata, create basic metadata from filename
       for (const file of pdfFiles) {
         if (metadata[file]) {
           activeMetadata[file] = metadata[file];
+        } else {
+          devLog(`Warning: No metadata found for file: ${file}, creating basic metadata`);
+          // Extract basic info from filename pattern: date title [addressee].pdf
+          const match = file.match(/^(\d{4}-\d{2}-\d{2})\s+(.+?)\s*(?:\[(.+?)\])?\.pdf$/i);
+          if (match) {
+            activeMetadata[file] = {
+              metadata: {
+                date: match[1],
+                title: match[2],
+                addressee: match[3] || '',
+                tags: [],
+                categoryHint: 'uncategorized',
+                docType: 'unknown'
+              },
+              inboxPath: path.join(inboxPath, file)
+            };
+          }
         }
       }
       
-      devLog(`Found ${pdfFiles.length} files in inbox with metadata`);
+      devLog(`Found ${pdfFiles.length} files in inbox, ${Object.keys(activeMetadata).length} with metadata`);
       return { fileMetadata: activeMetadata };
     } catch (error) {
       errorLog('Error scanning inbox:', error);
@@ -122,10 +144,14 @@ Guidelines:
 6. Common categories might include: financial, medical, insurance, property, services, receipts, legal, personal, work, etc.
 7. If unsure, use the categoryHint provided
 
+CRITICAL: You MUST use the EXACT filename provided in the input. Do not modify, shorten, or change the filename in any way.
+
 For each file, output a JSON object with:
-- currentPath: "inbox/{filename}"
-- newPath: "{category}/{optional-subcategory}/{filename}"
+- currentPath: "inbox/{EXACT filename as provided}"
+- newPath: "{category}/{optional-subcategory}/{EXACT filename as provided}"
 - reason: brief explanation of categorization
+
+The filename includes everything: date, title, addressees in brackets, and .pdf extension. Preserve it exactly.
 
 Return a JSON array of all file movements.`;
 
@@ -168,6 +194,14 @@ Return a JSON array of all file movements.`;
     
     for (const move of state.organizationPlan) {
       try {
+        // Check if source file exists
+        if (!fs.existsSync(move.currentPath)) {
+          const errorMsg = `Source file not found: ${path.basename(move.currentPath)}`;
+          errorLog(errorMsg);
+          errors.push(errorMsg);
+          continue;
+        }
+        
         // Create target directory if it doesn't exist
         const targetDir = path.dirname(move.newPath);
         await fs.promises.mkdir(targetDir, { recursive: true });
