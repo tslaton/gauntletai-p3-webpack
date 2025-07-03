@@ -21,7 +21,8 @@ export interface OrganizationState {
 // Factory function to create organization pipeline
 export function createOrganizationPipeline(
   openaiApiKey: string,
-  llmModel: string
+  llmModel: string,
+  useLowercase = true
 ) {
   // Create the model instance
   let model: ChatOpenAI | ChatOllama | null = null;
@@ -141,7 +142,7 @@ Return a JSON array of all file movements.`;
       // Validate and prefix paths correctly
       const validatedPlan = organizationPlan.map((item: any) => ({
         currentPath: path.join(state.watchFolder, 'file wrangler', item.currentPath),
-        newPath: path.join(state.watchFolder, 'file wrangler', item.newPath),
+        newPath: path.join(state.watchFolder, 'file wrangler', useLowercase ? item.newPath.toLowerCase() : item.newPath),
         reason: item.reason
       }));
       

@@ -385,7 +385,7 @@ ipcMain.handle('organize-files', async () => {
     mainWindow?.webContents.send('organization-status', { status: 'starting' });
     
     // Create organization pipeline
-    const organizationPipeline = createOrganizationPipeline(OPENAI_API_KEY, LLM_MODEL);
+    const organizationPipeline = createOrganizationPipeline(OPENAI_API_KEY, LLM_MODEL, USE_LOWERCASE);
     
     // Run the organization
     const initialState: OrganizationState = {
@@ -393,7 +393,7 @@ ipcMain.handle('organize-files', async () => {
       fileMetadata: {}
     };
     
-    const result = await organizationPipeline.invoke(initialState) as OrganizationState;
+    const result = await organizationPipeline.invoke(initialState as any) as OrganizationState;
     
     if (result.error) {
       errorLog('Organization error:', result.error);
@@ -498,13 +498,13 @@ async function checkAutoOrganize() {
       }).show();
       
       // Trigger organization
-      const organizationPipeline = createOrganizationPipeline(OPENAI_API_KEY, LLM_MODEL);
+      const organizationPipeline = createOrganizationPipeline(OPENAI_API_KEY, LLM_MODEL, USE_LOWERCASE);
       const initialState: OrganizationState = {
         watchFolder: WATCH_FOLDER,
         fileMetadata: {}
       };
       
-      const result = await organizationPipeline.invoke(initialState) as OrganizationState;
+      const result = await organizationPipeline.invoke(initialState as any) as OrganizationState;
       
       if (result.error) {
         errorLog('Auto-organization error:', result.error);
