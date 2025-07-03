@@ -14,6 +14,22 @@ import { rendererConfig } from './webpack.renderer.config';
 const config: ForgeConfig = {
   packagerConfig: {
     asar: true,
+    osxSign: {
+      // Empty object enables automatic certificate detection
+      // But we still specify entitlements for proper permissions
+      entitlements: './entitlements.mac.plist',
+      'entitlements-inherit': './entitlements.mac.plist',
+      hardenedRuntime: true,
+      'gatekeeper-assess': false
+    },
+    // Only enable notarization if credentials are provided
+    ...(process.env.APPLE_ID && process.env.APPLE_PASSWORD && process.env.APPLE_TEAM_ID ? {
+      osxNotarize: {
+        appleId: process.env.APPLE_ID,
+        appleIdPassword: process.env.APPLE_PASSWORD,
+        teamId: process.env.APPLE_TEAM_ID
+      }
+    } : {})
   },
   rebuildConfig: {},
   makers: [new MakerSquirrel({}), new MakerZIP({}, ['darwin']), new MakerRpm({}), new MakerDeb({})],

@@ -12,6 +12,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // PDF processing
   processPDF: (filePath: string) => ipcRenderer.invoke('process-pdf', filePath),
   
+  sendDebugMessage: (message: string) => ipcRenderer.send('renderer-debug', message),
+  
   // Listen for events
   onPDFAdded: (callback: (filePath: string) => void) => {
     ipcRenderer.on('pdf-added', (_event, filePath) => callback(filePath));
@@ -20,4 +22,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onProcessingUpdate: (callback: (data: any) => void) => {
     ipcRenderer.on('processing-update', (_event, data) => callback(data));
   },
+  
+  onDebugLog: (callback: (message: string) => void) => {
+    ipcRenderer.on('debug-log', (_event, message) => callback(message));
+  },
+  
 });

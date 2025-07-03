@@ -1,4 +1,5 @@
 import './index.css';
+import { devLog, errorLog } from './utils/logger';
 
 // Declare the electron API interface
 declare global {
@@ -12,6 +13,8 @@ declare global {
       processPDF: (filePath: string) => Promise<void>;
       onPDFAdded: (callback: (filePath: string) => void) => void;
       onProcessingUpdate: (callback: (data: any) => void) => void;
+      onDebugLog: (callback: (message: string) => void) => void;
+      sendDebugMessage: (message: string) => void;
     };
   }
 }
@@ -41,7 +44,7 @@ class PDFRenamerApp {
       this.config = await window.electronAPI.getConfig();
       this.updateUI();
     } catch (error) {
-      console.error('Failed to initialize app:', error);
+      errorLog('Failed to initialize app:', error);
     }
   }
   
@@ -120,7 +123,7 @@ class PDFRenamerApp {
         
         await window.electronAPI.showNotification('Settings Saved', 'Configuration updated successfully');
       } catch (error) {
-        console.error('Failed to save settings:', error);
+        errorLog('Failed to save settings:', error);
         await window.electronAPI.showNotification('Error', 'Failed to save settings');
       }
     });
@@ -222,7 +225,17 @@ class PDFRenamerApp {
   }
 }
 
+// Note: PDF conversion now happens in main process with pdf2img-electron
+
 // Initialize app when DOM is ready
 document.addEventListener('DOMContentLoaded', () => {
-  new PDFRenamerApp();
+  const app = new PDFRenamerApp();
+  
+  // Add debug logging
+  window.electronAPI.onDebugLog((message: string) => {
+    devLog('[Debug]', message);
+    // In production, you could still show debug messages in UI if needed
+    // For now, just log to console in dev mode
+  });
+  
 });

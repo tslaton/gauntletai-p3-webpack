@@ -1,10 +1,11 @@
 import { StateGraph, START, END } from '@langchain/langgraph';
 import fs from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
 import PDFParser from 'pdf2json';
 import MacOCR from '@cherrystudio/mac-system-ocr';
 import { ChatOpenAI } from '@langchain/openai';
-import { pdfToPng } from 'pdf-to-png-converter';
+import { devLog, errorLog } from '../utils/logger';
 
 // State definition
 export interface PDFState {
@@ -20,7 +21,11 @@ export interface PDFState {
 }
 
 // Factory function to create pipeline with current configuration
-export function createPDFPipeline(openaiApiKey: string, llmModel: string, useLowercase: boolean = true) {
+export function createPDFPipeline(
+  openaiApiKey: string, 
+  llmModel: string, 
+  useLowercase: boolean = true
+) {
   // Create the model instance once for this pipeline
   const model = openaiApiKey ? new ChatOpenAI({
     modelName: llmModel || 'gpt-4.1-nano',
@@ -30,7 +35,7 @@ export function createPDFPipeline(openaiApiKey: string, llmModel: string, useLow
 
   // Graph nodes with configuration closure
   async function parsePDF(state: PDFState): Promise<Partial<PDFState>> {
-    console.log('Parsing PDF:', state.path);
+    devLog('Parsing PDF:', state.path);
     
     try {
       // First try with pdf2json
@@ -38,28 +43,30 @@ export function createPDFPipeline(openaiApiKey: string, llmModel: string, useLow
       
       // If text is too short, use OCR
       if (text.trim().length < 20) {
-        console.log('Text too short, using OCR fallback');
+        devLog('Text too short, using OCR fallback');
         const ocrText = await ocrPDF(state.path);
         return { rawText: ocrText };
       }
       
       return { rawText: text };
     } catch (error) {
-      console.error('Error parsing PDF:', error);
+      errorLog('Error parsing PDF:', error);
       return { error: `Failed to parse PDF: ${error}` };
     }
   }
 
   async function callLLM(state: PDFState): Promise<Partial<PDFState>> {
     if (!state.rawText) {
+      devLog('LLM: No text to process');
       return { error: 'No text to process' };
     }
     
     if (!model) {
+      devLog('LLM: OpenAI API key not configured, model is null');
       return { error: 'OpenAI API key not configured' };
     }
     
-    console.log('Extracting metadata with LLM');
+    devLog('Extracting metadata with LLM, text length:', state.rawText.length);
     
     try {
       const systemPrompt = `You are a parser that extracts three fields from documents:
@@ -88,7 +95,7 @@ ${state.rawText.slice(0, 12000)}
         }
       };
     } catch (error) {
-      console.error('LLM error:', error);
+      errorLog('LLM error:', error);
       return { error: `Failed to extract metadata: ${error}` };
     }
   }
@@ -98,7 +105,7 @@ ${state.rawText.slice(0, 12000)}
       return { error: 'No metadata for renaming' };
     }
     
-    console.log('Renaming file with metadata:', state.meta);
+    devLog('Renaming file with metadata:', state.meta);
     
     try {
       const dir = path.dirname(state.path);
@@ -130,7 +137,7 @@ ${state.rawText.slice(0, 12000)}
       await fs.promises.rename(state.path, newPath);
       return { newPath };
     } catch (error) {
-      console.error('Rename error:', error);
+      errorLog('Rename error:', error);
       return { error: `Failed to rename file: ${error}` };
     }
   }
@@ -198,33 +205,56 @@ async function extractTextWithPDF2JSON(filePath: string): Promise<string> {
 }
 
 async function ocrPDF(filePath: string): Promise<string> {
+  // Check if running on macOS
+  if (process.platform !== 'darwin') {
+    throw new Error('OCR functionality is only available on macOS. Please ensure PDF files contain extractable text.');
+  }
+  
   try {
-    const pages = await pdfToPng(filePath, {
-      disableFontFace: true,
-      useSystemFonts: true,
-      viewportScale: 2.0,
-    });
+    devLog('Starting OCR process for:', filePath);
     
-    const ocrResults: string[] = [];
+    // Import pdf2img-electron in main process
+    const pdf2img = require('pdf2img-electron');
+    const pdfData = pdf2img.default(filePath);
+    devLog(`PDF loaded: ${pdfData.pages} pages`);
     
-    for (const page of pages) {
+    // Convert to PNG buffers
+    const imageBuffers = await pdfData.toPNG({ scale: 2.0 });
+    devLog(`Got ${imageBuffers.length} images from PDF`);
+    
+    // Use macOS OCR on each image
+    const ocrTexts: string[] = [];
+    for (let i = 0; i < imageBuffers.length; i++) {
+      devLog(`Processing page ${i + 1} of ${imageBuffers.length}`);
+      
+      // Save image to temporary file for OCR
+      const tempPath = path.join(os.tmpdir(), `ocr-temp-${Date.now()}-${i}.png`);
+      await fs.promises.writeFile(tempPath, imageBuffers[i]);
+      
       try {
-        const tempPath = path.join(path.dirname(filePath), `temp_ocr_${Date.now()}_${page.pageNumber}.png`);
-        await fs.promises.writeFile(tempPath, page.content);
-        
+        // OCR the image
         const result = await MacOCR.recognizeFromPath(tempPath);
-        ocrResults.push(result.text);
-        
-        await fs.promises.unlink(tempPath).catch(() => {});
-      } catch (pageError) {
-        console.error(`OCR error on page ${page.pageNumber}:`, pageError);
+        if (result && typeof result === 'string') {
+          ocrTexts.push(result);
+        } else if (result && typeof result === 'object' && 'text' in result) {
+          ocrTexts.push((result as any).text);
+        }
+      } finally {
+        // Clean up temp file
+        try {
+          await fs.promises.unlink(tempPath);
+        } catch {}
       }
     }
     
-    return ocrResults.join('\n\n');
+    // Join all text from all pages
+    const fullText = ocrTexts.join('\n\n');
+    devLog(`OCR completed, extracted ${fullText.length} characters`);
+    
+    return fullText;
   } catch (error) {
-    console.error('OCR error:', error);
-    throw error;
+    errorLog('OCR error:', error);
+    throw new Error(`OCR failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
 }
 
