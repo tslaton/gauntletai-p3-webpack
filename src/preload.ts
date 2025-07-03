@@ -15,6 +15,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   
   // Organization
   organizeFiles: () => ipcRenderer.invoke('organize-files'),
+  reorganizeAllFiles: () => ipcRenderer.invoke('reorganize-all-files'),
   getInboxCount: () => ipcRenderer.invoke('get-inbox-count'),
   
   sendDebugMessage: (message: string) => ipcRenderer.send('renderer-debug', message),

@@ -117,11 +117,39 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  margin-bottom: 1rem;
 }
 
 .inbox-count {
   font-size: 0.9rem;
   color: #666;
+}
+
+.org-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.org-buttons {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.btn-warning {
+  background-color: #f39c12;
+  border: 1px solid #e67e22;
+}
+
+.btn-warning:hover {
+  background-color: #e67e22;
+  border-color: #d35400;
+}
+
+.btn-warning:disabled {
+  background-color: #f7dc6f;
+  border-color: #f4d03f;
 }
 
 .processing-list {

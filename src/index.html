@@ -23,7 +23,7 @@
           <h2>Watch Folder</h2>
           <div class="folder-info">
             <span id="folder-path" class="folder-path">Loading...</span>
-            <button id="open-folder" class="btn btn-primary">Open Folder</button>
+            <button id="open-folder" class="btn btn-secondary">Open Folder</button>
           </div>
         </div>
         
@@ -31,7 +31,12 @@
           <h2>Organization</h2>
           <div class="org-info">
             <span id="inbox-count" class="inbox-count">0 files in inbox</span>
-            <button id="organize-now" class="btn btn-secondary">Organize Now</button>
+            <div class="org-buttons">
+              <button id="reorganize-all" class="btn btn-warning" title="Analyzes all files and reorganizes them into optimal categories">
+                🔄 Reorganize All Files
+              </button>
+              <button id="organize-now" class="btn btn-primary" title="Organize files in File Wrangler's inbox">Organize Now</button>
+            </div>
           </div>
         </div>
         

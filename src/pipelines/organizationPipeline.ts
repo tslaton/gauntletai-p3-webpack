@@ -18,6 +18,101 @@ export interface OrganizationState {
   movedFiles?: number;
 }
 
+// Helper function to recursively clean up empty directories
+export async function cleanupEmptyDirectories(dirPath: string, isRoot = true): Promise<string[]> {
+  const deletedDirs: string[] = [];
+  
+  try {
+    // Don't delete the root file wrangler directory or special directories
+    const protectedDirs = ['file wrangler', 'inbox', '.metadata.json'];
+    const dirName = path.basename(dirPath);
+    
+    if (isRoot || protectedDirs.includes(dirName)) {
+      // For root and protected dirs, just check subdirectories
+      const entries = await fs.promises.readdir(dirPath, { withFileTypes: true });
+      
+      for (const entry of entries) {
+        if (entry.isDirectory()) {
+          const subDirPath = path.join(dirPath, entry.name);
+          const deleted = await cleanupEmptyDirectories(subDirPath, false);
+          deletedDirs.push(...deleted);
+        }
+      }
+    } else {
+      // For non-protected directories, check if empty and delete if so
+      const entries = await fs.promises.readdir(dirPath);
+      
+      // Filter out .DS_Store and other system files
+      const meaningfulEntries = entries.filter(entry => 
+        !entry.startsWith('.') || entry === '.metadata.json'
+      );
+      
+      devLog(`Checking directory: ${dirPath}, entries: ${entries.length}, meaningful: ${meaningfulEntries.length}`);
+      
+      if (meaningfulEntries.length === 0) {
+        // First remove any system files like .DS_Store
+        for (const entry of entries) {
+          if (entry.startsWith('.') && entry !== '.metadata.json') {
+            try {
+              await fs.promises.unlink(path.join(dirPath, entry));
+              devLog(`Removed system file: ${entry} from ${dirPath}`);
+            } catch (err) {
+              // Ignore errors removing system files
+            }
+          }
+        }
+        
+        // Now try to remove the directory
+        await fs.promises.rmdir(dirPath);
+        deletedDirs.push(path.basename(dirPath));
+        devLog(`Deleted empty directory: ${dirPath}`);
+      } else {
+        // Check subdirectories
+        const dirEntries = await fs.promises.readdir(dirPath, { withFileTypes: true });
+        for (const entry of dirEntries) {
+          if (entry.isDirectory()) {
+            const subDirPath = path.join(dirPath, entry.name);
+            const deleted = await cleanupEmptyDirectories(subDirPath, false);
+            deletedDirs.push(...deleted);
+          }
+        }
+        
+        // Check again after subdirectory cleanup
+        const entriesAfter = await fs.promises.readdir(dirPath);
+        const meaningfulEntriesAfter = entriesAfter.filter(entry => 
+          !entry.startsWith('.') || entry === '.metadata.json'
+        );
+        
+        if (meaningfulEntriesAfter.length === 0 && !isRoot) {
+          // First remove any system files like .DS_Store
+          for (const entry of entriesAfter) {
+            if (entry.startsWith('.') && entry !== '.metadata.json') {
+              try {
+                await fs.promises.unlink(path.join(dirPath, entry));
+                devLog(`Removed system file: ${entry} from ${dirPath}`);
+              } catch (err) {
+                // Ignore errors removing system files
+              }
+            }
+          }
+          
+          // Now try to remove the directory
+          await fs.promises.rmdir(dirPath);
+          deletedDirs.push(path.basename(dirPath));
+          devLog(`Deleted empty directory after cleanup: ${dirPath}`);
+        }
+      }
+    }
+  } catch (error) {
+    // Ignore errors for individual directories
+    if ((error as any).code !== 'ENOENT') {
+      devLog(`Error checking directory ${dirPath}:`, error);
+    }
+  }
+  
+  return deletedDirs;
+}
+
 // Factory function to create organization pipeline
 export function createOrganizationPipeline(
   openaiApiKey: string,
@@ -41,6 +136,83 @@ export function createOrganizationPipeline(
       temperature: 0,
     });
     devLog('Using OpenAI model for organization:', llmModel);
+  }
+
+  // Node: Read all files for reorganization
+  async function scanAllFiles(state: OrganizationState): Promise<Partial<OrganizationState>> {
+    devLog('Scanning all files in file wrangler for reorganization');
+    
+    try {
+      const fileWranglerPath = path.join(state.watchFolder, 'file wrangler');
+      const metadataPath = path.join(fileWranglerPath, '.metadata.json');
+      
+      // Read metadata file
+      let metadata: Record<string, any> = {};
+      try {
+        const metadataContent = await fs.promises.readFile(metadataPath, 'utf-8');
+        metadata = JSON.parse(metadataContent);
+      } catch (error) {
+        devLog('No metadata file found or error reading it');
+      }
+      
+      // Recursively find all PDF files in file wrangler (except in inbox)
+      const allPdfFiles: Array<{filename: string, currentPath: string}> = [];
+      
+      async function findPdfs(dir: string, baseDir: string = fileWranglerPath) {
+        const entries = await fs.promises.readdir(dir, { withFileTypes: true });
+        
+        for (const entry of entries) {
+          const fullPath = path.join(dir, entry.name);
+          
+          if (entry.isDirectory() && entry.name !== 'inbox' && !entry.name.startsWith('.')) {
+            await findPdfs(fullPath, baseDir);
+          } else if (entry.isFile() && entry.name.endsWith('.pdf')) {
+            allPdfFiles.push({
+              filename: entry.name,
+              currentPath: fullPath
+            });
+          }
+        }
+      }
+      
+      await findPdfs(fileWranglerPath);
+      
+      devLog(`Found ${allPdfFiles.length} PDF files to reorganize`);
+      
+      // Build metadata for all files
+      const activeMetadata: Record<string, any> = {};
+      
+      for (const file of allPdfFiles) {
+        if (metadata[file.filename]) {
+          activeMetadata[file.filename] = {
+            ...metadata[file.filename],
+            currentPath: file.currentPath
+          };
+        } else {
+          // Extract basic info from filename for files without metadata
+          const match = file.filename.match(/^(\d{4}-\d{2}-\d{2})\s+(.+?)\s*(?:\[(.+?)\])?\.pdf$/i);
+          if (match) {
+            activeMetadata[file.filename] = {
+              metadata: {
+                date: match[1],
+                title: match[2],
+                addressee: match[3] || '',
+                tags: [],
+                categoryHint: 'uncategorized',
+                docType: 'unknown'
+              },
+              currentPath: file.currentPath
+            };
+          }
+        }
+      }
+      
+      devLog(`Prepared metadata for ${Object.keys(activeMetadata).length} files`);
+      return { fileMetadata: activeMetadata };
+    } catch (error) {
+      errorLog('Error scanning all files:', error);
+      return { error: `Failed to scan files: ${error}` };
+    }
   }
 
   // Node: Read files from inbox
@@ -123,36 +295,85 @@ export function createOrganizationPipeline(
     
     try {
       // Prepare file information for LLM
-      const fileInfoList = Object.entries(state.fileMetadata).map(([filename, data]) => ({
-        filename,
-        title: data.metadata?.title || 'Unknown',
-        tags: data.metadata?.tags || [],
-        categoryHint: data.metadata?.categoryHint || 'uncategorized',
-        docType: data.metadata?.docType || 'unknown',
-        date: data.metadata?.date || null,
-        addressee: data.metadata?.addressee || ''
-      }));
+      const fileWranglerPath = path.join(state.watchFolder, 'file wrangler');
+      const fileInfoList = Object.entries(state.fileMetadata).map(([filename, data]) => {
+        // Get relative path from file wrangler directory
+        const currentPath = data.currentPath || data.inboxPath || path.join(fileWranglerPath, 'inbox', filename);
+        const relativePath = path.relative(fileWranglerPath, currentPath);
+        
+        return {
+          filename,
+          currentPath: relativePath,
+          title: data.metadata?.title || 'Unknown',
+          tags: data.metadata?.tags || [],
+          categoryHint: data.metadata?.categoryHint || 'uncategorized',
+          docType: data.metadata?.docType || 'unknown',
+          date: data.metadata?.date || null,
+          addressee: data.metadata?.addressee || ''
+        };
+      });
       
-      const systemPrompt = `You are an intelligent file organization assistant. Your task is to organize PDF files into a logical folder structure.
+      // Different prompts for inbox organization vs full reorganization
+      const isReorganization = Object.values(state.fileMetadata).some(
+        (data: any) => data.currentPath && !data.currentPath.includes('/inbox/')
+      );
+      
+      const systemPrompt = isReorganization ? 
+        `You are an intelligent file organization assistant. Your task is to REORGANIZE all PDF files into an optimal folder structure.
+
+This is a FULL REORGANIZATION - you are looking at ALL files to create the best possible organization.
+
+Guidelines:
+1. Create a SINGLE-LEVEL folder structure (NO subcategories)
+2. Analyze ALL files holistically to determine the best categories
+3. Create 5-12 categories that best fit the actual documents you see
+4. Some files may need to move to different categories for better organization
+5. Standard categories to consider:
+   - utilities (electric, gas, water, internet, phone bills)
+   - insurance (all insurance policies and claims)
+   - medical (health records, test results, prescriptions)
+   - property (real estate, home documents)
+   - receipts (purchase receipts, invoices, shipping labels)
+   - travel (bookings, itineraries, rental agreements)
+   - work (employment documents, pay stubs)
+   - legal (contracts, notices, legal documents)
+   - personal (certificates, licenses, IDs)
+   - financial (ONLY for bank statements, investment docs, tax forms)
+6. You may create new categories if they better fit the documents
+7. Aim for balanced categories - avoid having one category with 90% of files
+8. Consider document relationships - related documents should be in the same category
+
+CRITICAL: You MUST use the EXACT filename provided. Preserve it exactly.
+
+For each file, output a JSON object with:
+- currentPath: "{current location relative to file wrangler}/{EXACT filename}"
+- newPath: "{category}/{EXACT filename}"
+- reason: brief explanation
+
+Return a JSON array for ALL files, even if some don't need to move.`
+        :
+        `You are an intelligent file organization assistant. Your task is to organize PDF files into a logical folder structure.
 
 Guidelines:
 1. Create a SINGLE-LEVEL folder structure (NO subcategories)
 2. Use 8-15 main categories that cover all document types
 3. Use clear, intuitive folder names that an average person would understand
 4. Each document goes into exactly ONE folder
-5. Suggested categories:
-   - financial (bank statements, tax documents, investments)
-   - medical (health records, test results, prescriptions)
-   - insurance (all insurance policies and claims)
-   - property (real estate, home documents)
+5. Suggested categories (in order of priority):
    - utilities (electric, gas, water, internet, phone bills)
-   - receipts (purchase receipts, invoices)
-   - legal (contracts, notices, legal documents)
+   - insurance (all insurance policies and claims)
+   - medical (health records, test results, prescriptions)
+   - property (real estate, home documents)
+   - receipts (purchase receipts, invoices, shipping labels)
    - travel (bookings, itineraries, rental agreements)
    - work (employment documents, pay stubs)
-   - personal (certificates, licenses, other personal docs)
-6. Consider the categoryHint and tags when organizing
-7. When in doubt, choose the most specific applicable category
+   - legal (contracts, notices, legal documents)
+   - personal (certificates, licenses, IDs)
+   - financial (ONLY for bank statements, investment docs, tax forms - use as LAST RESORT)
+   - other (anything that doesn't fit into the other categories)
+6. IMPORTANT: "financial" is a LOW PRIORITY category. Only use it if no higher priority category fits.
+7. Bills and statements should go to their specific service category (utilities, insurance, etc.) NOT financial
+8. Consider the categoryHint and tags when organizing
 
 CRITICAL: You MUST use the EXACT filename provided in the input. Do not modify, shorten, or change the filename in any way.
 
@@ -192,62 +413,54 @@ Return a JSON array of all file movements.`;
 
   // Node: Execute the organization plan
   async function executeOrganization(state: OrganizationState): Promise<Partial<OrganizationState>> {
-    if (!state.organizationPlan || state.organizationPlan.length === 0) {
-      devLog('No organization plan to execute');
-      return { movedFiles: 0 };
-    }
-    
-    devLog(`Executing organization plan for ${state.organizationPlan.length} files`);
-    
     let movedCount = 0;
     const errors: string[] = [];
     
-    for (const move of state.organizationPlan) {
-      try {
-        // Check if source file exists
-        if (!fs.existsSync(move.currentPath)) {
-          const errorMsg = `Source file not found: ${path.basename(move.currentPath)}`;
+    // Execute the organization plan if there is one
+    if (state.organizationPlan && state.organizationPlan.length > 0) {
+      devLog(`Executing organization plan for ${state.organizationPlan.length} files`);
+      
+      for (const move of state.organizationPlan) {
+        try {
+          // Check if source file exists
+          if (!fs.existsSync(move.currentPath)) {
+            const errorMsg = `Source file not found: ${path.basename(move.currentPath)}`;
+            errorLog(errorMsg);
+            errors.push(errorMsg);
+            continue;
+          }
+          
+          // Create target directory if it doesn't exist
+          const targetDir = path.dirname(move.newPath);
+          await fs.promises.mkdir(targetDir, { recursive: true });
+          
+          // Move the file
+          await fs.promises.rename(move.currentPath, move.newPath);
+          movedCount++;
+          
+          devLog(`Moved: ${path.basename(move.currentPath)} → ${move.newPath.replace(state.watchFolder, '...')}`);
+        } catch (error) {
+          const errorMsg = `Failed to move ${path.basename(move.currentPath)}: ${error}`;
           errorLog(errorMsg);
           errors.push(errorMsg);
-          continue;
-        }
-        
-        // Create target directory if it doesn't exist
-        const targetDir = path.dirname(move.newPath);
-        await fs.promises.mkdir(targetDir, { recursive: true });
-        
-        // Move the file
-        await fs.promises.rename(move.currentPath, move.newPath);
-        movedCount++;
-        
-        devLog(`Moved: ${path.basename(move.currentPath)} → ${move.newPath.replace(state.watchFolder, '...')}`);
-      } catch (error) {
-        const errorMsg = `Failed to move ${path.basename(move.currentPath)}: ${error}`;
-        errorLog(errorMsg);
-        errors.push(errorMsg);
-      }
-    }
-    
-    // Update metadata file to reflect new locations
-    try {
-      const metadataPath = path.join(state.watchFolder, 'file wrangler', '.metadata.json');
-      const metadata = state.fileMetadata;
-      
-      // Update paths in metadata
-      for (const move of state.organizationPlan) {
-        const filename = path.basename(move.currentPath);
-        if (metadata[filename]) {
-          metadata[filename].currentPath = move.newPath;
-          metadata[filename].lastOrganized = new Date().toISOString();
         }
       }
-      
-      await fs.promises.writeFile(metadataPath, JSON.stringify(metadata, null, 2));
-    } catch (error) {
-      errorLog('Failed to update metadata after organization:', error);
+    } else {
+      devLog('No files to organize in this run');
     }
     
-    devLog(`Organization complete: ${movedCount}/${state.organizationPlan.length} files moved`);
+    // Note: The file wrangler watcher will detect the moves and update metadata
+    // We should NOT run stale cleanup or directory cleanup here because:
+    // 1. Files are being moved, not deleted
+    // 2. The watcher will handle metadata updates as it detects file movements
+    // 3. The watcher will also schedule directory cleanup if needed
+    
+    // Log the completion message
+    if (state.organizationPlan && state.organizationPlan.length > 0) {
+      devLog(`Organization complete: ${movedCount}/${state.organizationPlan.length} files moved`);
+    } else {
+      devLog('Metadata and directory cleanup completed');
+    }
     
     if (errors.length > 0) {
       return { 
@@ -259,7 +472,7 @@ Return a JSON array of all file movements.`;
     return { movedFiles: movedCount };
   }
 
-  // Create the graph
+  // Create the graph for normal organization (inbox only)
   const workflow = new StateGraph<OrganizationState, Partial<OrganizationState>>({
     channels: {
       watchFolder: null,
@@ -281,6 +494,35 @@ Return a JSON array of all file movements.`;
   workflow.addEdge('plan' as any, 'execute' as any);
   workflow.addEdge('execute' as any, END);
   
-  // Compile and return
-  return workflow.compile();
+  // Create separate workflow for full reorganization
+  const reorganizeWorkflow = new StateGraph<OrganizationState, Partial<OrganizationState>>({
+    channels: {
+      watchFolder: null,
+      fileMetadata: null,
+      organizationPlan: null,
+      error: null,
+      movedFiles: null,
+    }
+  });
+  
+  // Add nodes for reorganization
+  reorganizeWorkflow.addNode('scanAll', scanAllFiles as any);
+  reorganizeWorkflow.addNode('plan', planOrganization as any);
+  reorganizeWorkflow.addNode('execute', executeOrganization as any);
+  
+  // Add edges
+  reorganizeWorkflow.addEdge(START, 'scanAll' as any);
+  reorganizeWorkflow.addEdge('scanAll' as any, 'plan' as any);
+  reorganizeWorkflow.addEdge('plan' as any, 'execute' as any);
+  reorganizeWorkflow.addEdge('execute' as any, END);
+  
+  // Compile both workflows
+  const compiledWorkflow = workflow.compile();
+  const compiledReorganizeWorkflow = reorganizeWorkflow.compile();
+  
+  // Return an object with both workflows
+  return {
+    organization: compiledWorkflow,
+    reorganization: compiledReorganizeWorkflow
+  };
 }

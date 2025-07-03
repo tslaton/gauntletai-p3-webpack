@@ -7,6 +7,7 @@ import MacOCR from '@cherrystudio/mac-system-ocr';
 import { ChatOpenAI } from '@langchain/openai';
 import { ChatOllama } from '@langchain/ollama';
 import { devLog, errorLog } from '../utils/logger';
+import { updateFileMetadata } from '../utils/metadataManager';
 
 // State definition
 export interface PDFState {
@@ -314,42 +315,6 @@ ${state.rawText.slice(0, 12000)}
     }
   }
 
-  // Helper function to save metadata with retry logic
-  async function saveMetadataWithRetry(
-    metadataPath: string, 
-    filename: string, 
-    data: any, 
-    maxRetries = 3
-  ): Promise<void> {
-    let retries = maxRetries;
-    while (retries > 0) {
-      try {
-        let existingMetadata: Record<string, any> = {};
-        
-        try {
-          const metadataContent = await fs.promises.readFile(metadataPath, 'utf-8');
-          existingMetadata = JSON.parse(metadataContent);
-        } catch (error) {
-          // File doesn't exist yet, that's ok
-        }
-        
-        // Add or update metadata for this file
-        existingMetadata[filename] = data;
-        
-        await fs.promises.writeFile(metadataPath, JSON.stringify(existingMetadata, null, 2));
-        return; // Success, exit function
-      } catch (error) {
-        retries--;
-        if (retries === 0) {
-          errorLog('Failed to write metadata after retries:', error);
-          throw error;
-        } else {
-          // Wait a bit before retry
-          await new Promise(resolve => setTimeout(resolve, 100));
-        }
-      }
-    }
-  }
 
   async function renameFile(state: PDFState): Promise<Partial<PDFState>> {
     if (!state.meta) {
@@ -404,7 +369,7 @@ ${state.rawText.slice(0, 12000)}
         const metadataPath = path.join(originalDir, 'file wrangler', '.metadata.json');
         const finalName = path.basename(finalPath);
         
-        await saveMetadataWithRetry(metadataPath, finalName, {
+        await updateFileMetadata(metadataPath, finalName, {
           originalPath: state.path,
           processedAt: new Date().toISOString(),
           metadata: state.meta,
@@ -419,7 +384,7 @@ ${state.rawText.slice(0, 12000)}
       // Save metadata to a JSON file for the organization agent
       const metadataPath = path.join(originalDir, 'file wrangler', '.metadata.json');
       
-      await saveMetadataWithRetry(metadataPath, cleanName, {
+      await updateFileMetadata(metadataPath, cleanName, {
         originalPath: state.path,
         processedAt: new Date().toISOString(),
         metadata: state.meta,

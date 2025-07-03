@@ -14,6 +14,7 @@ declare global {
       getOllamaModels: () => Promise<any[]>;
       processPDF: (filePath: string) => Promise<void>;
       organizeFiles: () => Promise<{success: boolean, movedFiles?: number, error?: string}>;
+      reorganizeAllFiles: () => Promise<{success: boolean, movedFiles?: number, error?: string}>;
       getInboxCount: () => Promise<number>;
       onPDFAdded: (callback: (filePath: string) => void) => void;
       onProcessingUpdate: (callback: (data: any) => void) => void;
@@ -203,6 +204,50 @@ class PDFRenamerApp {
         if (button) {
           button.disabled = false;
           button.textContent = 'Organize Now';
+        }
+        await this.updateInboxCount();
+      }
+    });
+    
+    // Reorganize all button
+    document.getElementById('reorganize-all')?.addEventListener('click', async () => {
+      const button = document.getElementById('reorganize-all') as HTMLButtonElement;
+      
+      // Confirm with user since this is a major operation
+      const confirmDialog = confirm(
+        'This will analyze ALL files in your File Wrangler folder and reorganize them for optimal categorization.\n\n' +
+        'Files may be moved to different categories based on the overall document collection.\n\n' +
+        'Do you want to continue?'
+      );
+      
+      if (!confirmDialog) {
+        return;
+      }
+      
+      if (button) {
+        button.disabled = true;
+        button.textContent = '🔄 Reorganizing...';
+      }
+      
+      try {
+        const result = await window.electronAPI.reorganizeAllFiles();
+        if (result.success) {
+          await window.electronAPI.showNotification(
+            'Reorganization Complete',
+            `${result.movedFiles} files have been reorganized into optimal folders`
+          );
+        } else {
+          await window.electronAPI.showNotification(
+            'Reorganization Failed',
+            result.error || 'Unknown error occurred'
+          );
+        }
+      } catch (error) {
+        errorLog('Failed to reorganize files:', error);
+      } finally {
+        if (button) {
+          button.disabled = false;
+          button.textContent = '🔄 Reorganize All Files';
         }
         await this.updateInboxCount();
       }
