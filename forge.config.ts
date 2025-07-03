@@ -7,9 +7,13 @@ import { AutoUnpackNativesPlugin } from '@electron-forge/plugin-auto-unpack-nati
 import { WebpackPlugin } from '@electron-forge/plugin-webpack';
 import { FusesPlugin } from '@electron-forge/plugin-fuses';
 import { FuseV1Options, FuseVersion } from '@electron/fuses';
+import * as dotenv from 'dotenv';
 
 import { mainConfig } from './webpack.main.config';
 import { rendererConfig } from './webpack.renderer.config';
+
+// Load environment variables from .env file
+dotenv.config();
 
 const config: ForgeConfig = {
   packagerConfig: {
@@ -25,11 +29,10 @@ const config: ForgeConfig = {
     } as any,
     // Use keychain profile for notarization
     // as any - Types are outdated, 'tool' property is valid
-    // Apple Developer notarization is pending...
-    // osxNotarize: {
-    //   tool: 'notarytool',
-    //   keychainProfile: 'notarytool-credentials'
-    // } as any
+    osxNotarize: {
+      tool: 'notarytool',
+      keychainProfile: 'notarytool-credentials'
+    } as any
   },
   rebuildConfig: {},
   makers: [new MakerSquirrel({}), new MakerZIP({}, ['darwin']), new MakerRpm({}), new MakerDeb({})],
