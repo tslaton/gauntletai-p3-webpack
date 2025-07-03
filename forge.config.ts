@@ -14,22 +14,22 @@ import { rendererConfig } from './webpack.renderer.config';
 const config: ForgeConfig = {
   packagerConfig: {
     asar: true,
+    icon: './src/assets/icon', // Without file extension - Electron will use .icns on macOS, .ico on Windows
+    // as any - Types are outdated, these properties are valid
     osxSign: {
       // Empty object enables automatic certificate detection
-      // But we still specify entitlements for proper permissions
-      entitlements: './entitlements.mac.plist',
-      'entitlements-inherit': './entitlements.mac.plist',
       hardenedRuntime: true,
-      'gatekeeper-assess': false
-    },
-    // Only enable notarization if credentials are provided
-    ...(process.env.APPLE_ID && process.env.APPLE_PASSWORD && process.env.APPLE_TEAM_ID ? {
-      osxNotarize: {
-        appleId: process.env.APPLE_ID,
-        appleIdPassword: process.env.APPLE_PASSWORD,
-        teamId: process.env.APPLE_TEAM_ID
-      }
-    } : {})
+      'gatekeeper-assess': false,
+      entitlements: './entitlements.mac.plist',
+      'entitlements-inherit': './entitlements.mac.plist'
+    } as any,
+    // Use keychain profile for notarization
+    // as any - Types are outdated, 'tool' property is valid
+    // Apple Developer notarization is pending...
+    // osxNotarize: {
+    //   tool: 'notarytool',
+    //   keychainProfile: 'notarytool-credentials'
+    // } as any
   },
   rebuildConfig: {},
   makers: [new MakerSquirrel({}), new MakerZIP({}, ['darwin']), new MakerRpm({}), new MakerDeb({})],
@@ -63,6 +63,19 @@ const config: ForgeConfig = {
       [FuseV1Options.OnlyLoadAppFromAsar]: true,
     }),
   ],
+  publishers: [
+    {
+      name: '@electron-forge/publisher-github',
+      config: {
+        repository: {
+          owner: 'tslaton',
+          name: 'gauntletai-p3-webpack'
+        },
+        prerelease: false,
+        draft: true
+      }
+    }
+  ]
 };
 
 export default config;

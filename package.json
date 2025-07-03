@@ -1,6 +1,6 @@
 {
   "name": "gauntletai-p3-webpack",
-  "productName": "gauntletai-p3-webpack",
+  "productName": "File Wrangler",
   "version": "1.0.0",
   "description": "My Electron application description",
   "main": ".webpack/main",
@@ -26,6 +26,7 @@
     "@electron-forge/plugin-auto-unpack-natives": "^7.8.1",
     "@electron-forge/plugin-fuses": "^7.8.1",
     "@electron-forge/plugin-webpack": "^7.8.1",
+    "@electron-forge/publisher-github": "^7.8.1",
     "@electron/fuses": "^1.8.0",
     "@typescript-eslint/eslint-plugin": "^5.62.0",
     "@typescript-eslint/parser": "^5.62.0",

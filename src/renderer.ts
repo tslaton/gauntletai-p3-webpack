@@ -1,5 +1,6 @@
 import './index.css';
 import { devLog, errorLog } from './utils/logger';
+import iconPath from './assets/icon.png';
 
 // Declare the electron API interface
 declare global {
@@ -229,6 +230,12 @@ class PDFRenamerApp {
 
 // Initialize app when DOM is ready
 document.addEventListener('DOMContentLoaded', () => {
+  // Set the app icon
+  const appIcon = document.querySelector('.app-icon') as HTMLImageElement;
+  if (appIcon) {
+    appIcon.src = iconPath;
+  }
+  
   const app = new PDFRenamerApp();
   
   // Add debug logging

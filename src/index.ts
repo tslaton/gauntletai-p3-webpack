@@ -65,11 +65,12 @@ if (!fs.existsSync(WATCH_FOLDER)) {
   fs.mkdirSync(WATCH_FOLDER, { recursive: true });
 }
 
-const createWindow = () => {
+const createWindow = () => {  
   // Create the browser window.
   mainWindow = new BrowserWindow({
     width: 900,
     height: 700,
+    icon: app.isPackaged ? path.join(process.cwd(), 'src', 'assets', 'icon.png') : undefined,
     webPreferences: {
       preload: MAIN_WINDOW_PRELOAD_WEBPACK_ENTRY,
       contextIsolation: true,
@@ -95,6 +96,18 @@ const createWindow = () => {
     if (!app.isQuitting) {
       event.preventDefault();
       mainWindow?.hide();
+    }
+  });
+  
+  // Register DevTools shortcut
+  mainWindow.webContents.on('before-input-event', (event, input) => {
+    // On macOS, use Cmd+Shift+I; on other platforms use Ctrl+Shift+I
+    const isMac = process.platform === 'darwin';
+    const modifierPressed = isMac ? input.meta : input.control;
+    
+    if (input.key.toLowerCase() === 'i' && input.shift && modifierPressed) {
+      event.preventDefault();
+      mainWindow?.webContents.toggleDevTools();
     }
   });
   
@@ -404,6 +417,18 @@ async function processPDFFile(filePath: string) {
 // initialization and is ready to create browser windows.
 app.on('ready', async () => {
   devLog('App ready, initializing...');
+  
+  // Set dock icon for macOS in development
+  if (process.platform === 'darwin' && !app.isPackaged) {
+    const dockIconPath = path.join(process.cwd(), 'src', 'assets', 'icon.png');
+    if (fs.existsSync(dockIconPath)) {
+      app.dock.setIcon(dockIconPath);
+      devLog('Set dock icon:', dockIconPath);
+    } else {
+      devLog('Dock icon not found at:', dockIconPath);
+    }
+  }
+  
   createWindow();
   createTray();
   

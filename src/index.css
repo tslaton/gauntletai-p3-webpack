@@ -31,6 +31,15 @@ body {
 .header h1 {
   font-size: 1.5rem;
   font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.app-icon {
+  width: 24px;
+  height: 24px;
+  object-fit: contain;
 }
 
 .settings-btn {
