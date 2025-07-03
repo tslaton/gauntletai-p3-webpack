@@ -13,6 +13,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // PDF processing
   processPDF: (filePath: string) => ipcRenderer.invoke('process-pdf', filePath),
   
+  // Organization
+  organizeFiles: () => ipcRenderer.invoke('organize-files'),
+  getInboxCount: () => ipcRenderer.invoke('get-inbox-count'),
+  
   sendDebugMessage: (message: string) => ipcRenderer.send('renderer-debug', message),
   
   // Listen for events
@@ -26,6 +30,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   
   onDebugLog: (callback: (message: string) => void) => {
     ipcRenderer.on('debug-log', (_event, message) => callback(message));
+  },
+  
+  onOrganizationStatus: (callback: (data: any) => void) => {
+    ipcRenderer.on('organization-status', (_event, data) => callback(data));
   },
   
 });

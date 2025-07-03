@@ -16,6 +16,9 @@ export interface PDFState {
     date: string;
     title: string;
     addressee: string;
+    tags?: string[];
+    categoryHint?: string;
+    docType?: string;
   };
   error?: string;
   newPath?: string;
@@ -112,10 +115,7 @@ export function createPDFPipeline(
           
           // Unfortunately, we can only process what pdf2img can see
           // Log this for the user to know
-          const missingPageNote = `\n\n[NOTE: This PDF contains ${actualPageCount} pages, but only ${imageBuffers.length} could be processed due to pdf2img-electron limitations with mixed-orientation PDFs.]`;
-          
-          // We'll append this note to the OCR text later
-          devLog(`Will append note about missing pages to the final text`);
+          devLog(`Note: This PDF contains ${actualPageCount} pages, but only ${imageBuffers.length} could be processed due to pdf2img-electron limitations`);
         }
         
         // Log buffer sizes to detect potential issues
@@ -254,23 +254,29 @@ export function createPDFPipeline(
     devLog('Extracting metadata with LLM, text length:', state.rawText.length);
     
     try {
-      const systemPrompt = `You are a parser that extracts three fields from documents:
+      const systemPrompt = `You are a parser that extracts metadata from documents.
+
+Extract the following fields:
 1. date (yyyy-mm-dd; null if absent)
-2. title (<= 8 words, no commas; if the title is not descriptive of the document, write the name of the bank, business, or otherentity sending the document and describe the document's main subject in a few words instead)
+2. title (<= 8 words, no commas; if the title is not descriptive of the document, write the name of the bank, business, or other entity sending the document and describe the document's main subject in a few words instead)
 3. addressees (<= 2 first names only, left blank if unknown; prefer proper names to generic terms like "customer")
+4. tags (3-5 descriptive tags that capture the document's nature, purpose, and content)
+5. categoryHint (suggested category folder like "financial", "medical", "insurance", "property", "services", "receipts", etc.)
+6. docType (specific document type like "bank-statement", "invoice", "contract", "policy", "receipt", etc.)
 
 Prefer as addressees the names "Trevor", "Maryam", "Ghufran", and "Saira" if they are present in the document.
 
-Return JSON exactly like {"date":"...", "title":"...", "addressees":"..."}
+Return JSON exactly like:
+{"date":"...", "title":"...", "addressees":"...", "tags":["..."], "categoryHint":"...", "docType":"..."}
 
-Here are some examples of the JSON format I need:
+Here are some examples:
 
-{"date":"2025-01-01","title":"Wells Fargo Bank Statement","addressees":"Trevor"}
-{"date":"2017-06-03","title":"Chicago Title Company Closing Disclosure","addressees":"Maryam Trevor"}
-{"date":"2023-10-15","title":"PG&E Electric Bill and Statement","addressees":"Ghufran"}
-{"date":"2024-11-07","title":"GEICO Insurance Policy","addressees":"Saira"}
-{"date":null,"title":"Uplift Desk UPS Shipping Label","addressees":"Trevor"}
-{"date":null,"title":"Ameritas Disability Insurance Notice","addressees":""}
+{"date":"2025-01-01","title":"Wells Fargo Bank Statement","addressees":"Trevor","tags":["banking","financial","statement","wells-fargo","monthly"],"categoryHint":"financial","docType":"bank-statement"}
+{"date":"2017-06-03","title":"Chicago Title Company Closing Disclosure","addressees":"Maryam Trevor","tags":["real-estate","closing","property","title","mortgage"],"categoryHint":"property","docType":"closing-disclosure"}
+{"date":"2023-10-15","title":"PG&E Electric Bill and Statement","addressees":"Ghufran","tags":["utility","electricity","pge","bill","monthly"],"categoryHint":"services","docType":"utility-bill"}
+{"date":"2024-11-07","title":"GEICO Insurance Policy","addressees":"Saira","tags":["insurance","auto","geico","policy","coverage"],"categoryHint":"insurance","docType":"insurance-policy"}
+{"date":null,"title":"Uplift Desk UPS Shipping Label","addressees":"Trevor","tags":["shipping","ups","delivery","furniture","tracking"],"categoryHint":"receipts","docType":"shipping-label"}
+{"date":null,"title":"Ameritas Disability Insurance Notice","addressees":"","tags":["insurance","disability","ameritas","notice","benefits"],"categoryHint":"insurance","docType":"insurance-notice"}
 `;
       
       const userPrompt = `Document text follows \`\`\`
@@ -296,7 +302,10 @@ ${state.rawText.slice(0, 12000)}
         meta: {
           date: finalDate,
           title: (metadata.title || 'Untitled').slice(0, 100),
-          addressee: (metadata.addressees || metadata.addressee || 'Unknown').slice(0, 50)
+          addressee: (metadata.addressees || metadata.addressee || 'Unknown').slice(0, 50),
+          tags: metadata.tags || [],
+          categoryHint: metadata.categoryHint || 'uncategorized',
+          docType: metadata.docType || 'unknown'
         }
       };
     } catch (error) {
@@ -313,7 +322,11 @@ ${state.rawText.slice(0, 12000)}
     devLog('Renaming file with metadata:', state.meta);
     
     try {
-      const dir = path.dirname(state.path);
+      const originalDir = path.dirname(state.path);
+      
+      // Create the 'file wrangler/inbox' directory if it doesn't exist
+      const fileWranglerDir = path.join(originalDir, 'file wrangler', 'inbox');
+      await fs.promises.mkdir(fileWranglerDir, { recursive: true });
       
       // Process addressees: split by space, take first 2, remove duplicates
       const addresseesList = state.meta.addressee.split(/\s+/)
@@ -326,7 +339,7 @@ ${state.rawText.slice(0, 12000)}
       // Format each addressee in its own brackets
       const addresseesString = uniqueAddressees.map(name => `[${name}]`).join('');
       
-      let newName = `${state.meta.date} ${state.meta.title} ${addresseesString}.pdf`;
+      const newName = `${state.meta.date} ${state.meta.title} ${addresseesString}.pdf`;
       
       // Clean filename for filesystem
       let cleanName = newName.replace(/[<>:"/\\|?*]/g, '-');
@@ -336,7 +349,8 @@ ${state.rawText.slice(0, 12000)}
         cleanName = cleanName.toLowerCase();
       }
       
-      const newPath = path.join(dir, cleanName);
+      // The new path is in the 'file wrangler/inbox' directory
+      const newPath = path.join(fileWranglerDir, cleanName);
       
       // Check if file already exists
       if (fs.existsSync(newPath) && newPath !== state.path) {
@@ -344,14 +358,58 @@ ${state.rawText.slice(0, 12000)}
         let finalPath = newPath;
         while (fs.existsSync(finalPath)) {
           const base = path.basename(newPath, '.pdf');
-          finalPath = path.join(dir, `${base} (${counter}).pdf`);
+          finalPath = path.join(fileWranglerDir, `${base} (${counter}).pdf`);
           counter++;
         }
         await fs.promises.rename(state.path, finalPath);
+        
+        // Save metadata with the final filename
+        const metadataPath = path.join(originalDir, 'file wrangler', '.metadata.json');
+        let existingMetadata: Record<string, any> = {};
+        
+        try {
+          const metadataContent = await fs.promises.readFile(metadataPath, 'utf-8');
+          existingMetadata = JSON.parse(metadataContent);
+        } catch (error) {
+          // File doesn't exist yet, that's ok
+        }
+        
+        const finalName = path.basename(finalPath);
+        existingMetadata[finalName] = {
+          originalPath: state.path,
+          processedAt: new Date().toISOString(),
+          metadata: state.meta,
+          inboxPath: finalPath
+        };
+        
+        await fs.promises.writeFile(metadataPath, JSON.stringify(existingMetadata, null, 2));
+        
         return { newPath: finalPath };
       }
       
       await fs.promises.rename(state.path, newPath);
+      
+      // Save metadata to a JSON file for the organization agent
+      const metadataPath = path.join(originalDir, 'file wrangler', '.metadata.json');
+      let existingMetadata: Record<string, any> = {};
+      
+      try {
+        const metadataContent = await fs.promises.readFile(metadataPath, 'utf-8');
+        existingMetadata = JSON.parse(metadataContent);
+      } catch (error) {
+        // File doesn't exist yet, that's ok
+      }
+      
+      // Add or update metadata for this file
+      existingMetadata[cleanName] = {
+        originalPath: state.path,
+        processedAt: new Date().toISOString(),
+        metadata: state.meta,
+        inboxPath: newPath
+      };
+      
+      await fs.promises.writeFile(metadataPath, JSON.stringify(existingMetadata, null, 2));
+      
       return { newPath };
     } catch (error) {
       errorLog('Rename error:', error);
