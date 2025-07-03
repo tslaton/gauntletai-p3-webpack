@@ -136,22 +136,32 @@ export function createOrganizationPipeline(
       const systemPrompt = `You are an intelligent file organization assistant. Your task is to organize PDF files into a logical folder structure.
 
 Guidelines:
-1. Create a shallow folder structure (max 2 levels deep)
-2. Prefer 5-15 main categories
+1. Create a SINGLE-LEVEL folder structure (NO subcategories)
+2. Use 8-15 main categories that cover all document types
 3. Use clear, intuitive folder names that an average person would understand
-4. Consider the categoryHint, tags, and document type when organizing
-5. Group related documents together
-6. Common categories might include: financial, medical, insurance, property, services, receipts, legal, personal, work, etc.
-7. If unsure, use the categoryHint provided
+4. Each document goes into exactly ONE folder
+5. Suggested categories:
+   - financial (bank statements, tax documents, investments)
+   - medical (health records, test results, prescriptions)
+   - insurance (all insurance policies and claims)
+   - property (real estate, home documents)
+   - utilities (electric, gas, water, internet, phone bills)
+   - receipts (purchase receipts, invoices)
+   - legal (contracts, notices, legal documents)
+   - travel (bookings, itineraries, rental agreements)
+   - work (employment documents, pay stubs)
+   - personal (certificates, licenses, other personal docs)
+6. Consider the categoryHint and tags when organizing
+7. When in doubt, choose the most specific applicable category
 
 CRITICAL: You MUST use the EXACT filename provided in the input. Do not modify, shorten, or change the filename in any way.
 
 For each file, output a JSON object with:
 - currentPath: "inbox/{EXACT filename as provided}"
-- newPath: "{category}/{optional-subcategory}/{EXACT filename as provided}"
-- reason: brief explanation of categorization
+- newPath: "{category}/{EXACT filename as provided}"
+- reason: brief explanation (max 10 words)
 
-The filename includes everything: date, title, addressees in brackets, and .pdf extension. Preserve it exactly.
+NO SUBCATEGORIES. Just category/filename.
 
 Return a JSON array of all file movements.`;
 
