@@ -68,6 +68,15 @@
             </div>
             
             <div class="form-group">
+              <label for="processing-mode-select">Processing Mode</label>
+              <select id="processing-mode-select">
+                <option value="accuracy">Prefer accuracy (sequential)</option>
+                <option value="speed">Prefer speed (parallel)</option>
+              </select>
+              <small class="form-help">Sequential processing prevents console warnings but is slower</small>
+            </div>
+            
+            <div class="form-group">
               <label class="checkbox-label">
                 <input type="checkbox" id="lowercase-checkbox" checked>
                 <span>Use lowercase filenames</span>

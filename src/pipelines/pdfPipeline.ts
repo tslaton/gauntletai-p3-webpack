@@ -25,7 +25,8 @@ export interface PDFState {
 export function createPDFPipeline(
   openaiApiKey: string, 
   llmModel: string, 
-  useLowercase: boolean = true
+  useLowercase = true,
+  processingMode = 'accuracy'
 ) {
   // Create the model instance once for this pipeline
   let model: ChatOpenAI | ChatOllama | null = null;
@@ -43,6 +44,174 @@ export function createPDFPipeline(
       temperature: 0,
       openAIApiKey: openaiApiKey,
     });
+  }
+
+  // OCR function with access to processingMode
+  async function ocrPDF(filePath: string): Promise<string> {
+    // Check if running on macOS
+    if (process.platform !== 'darwin') {
+      throw new Error('OCR functionality is only available on macOS. Please ensure PDF files contain extractable text.');
+    }
+    
+    let sessionDir: string | null = null;
+    
+    try {
+      devLog('Starting OCR process for:', filePath);
+      
+      // Import pdf2img-electron in main process
+      const pdf2img = require('pdf2img-electron');
+      
+      // Generate unique identifier for this PDF processing session
+      const sessionId = `${Date.now()}-${Math.random().toString(36).substring(7)}`;
+      
+      // Create unique temp directory for this session
+      sessionDir = path.join(os.tmpdir(), `pdf-ocr-${sessionId}`);
+      await fs.promises.mkdir(sessionDir, { recursive: true });
+      devLog(`Created session directory: ${sessionDir}`);
+      
+      const pdfData = pdf2img.default(filePath);
+      devLog(`PDF loaded: ${pdfData.pages} pages`);
+      
+      // First, let's check the actual page count with pdf2json for comparison
+      let actualPageCount = pdfData.pages;
+      try {
+        const pdfParser = new PDFParser();
+        const pdfInfo = await new Promise<number>((resolve) => {
+          pdfParser.on('pdfParser_dataReady', (data: any) => {
+            resolve(data.Pages ? data.Pages.length : 1);
+          });
+          pdfParser.on('pdfParser_dataError', () => resolve(pdfData.pages));
+          pdfParser.loadPDF(filePath);
+        });
+        
+        if (pdfInfo > pdfData.pages) {
+          errorLog(`CRITICAL: pdf2img sees ${pdfData.pages} pages but pdf2json sees ${pdfInfo} pages!`);
+          actualPageCount = pdfInfo;
+        }
+      } catch (e) {
+        devLog('Could not verify page count with pdf2json');
+      }
+      
+      // Convert to PNG buffers
+      // Note: You may see "tile memory limits exceeded" warnings from Chromium at scale 3.0
+      // These are harmless for our use case - they just mean Chromium's internal tile buffer
+      // is conservative. The full image is still rendered correctly for OCR.
+      const scale = 1.0; // 1.0 might also be more accurate than 2.0 or 3.0 but we can change based on processingMode
+      devLog(`Using scale ${scale} for ${processingMode} mode`);
+      
+      let imageBuffers: Buffer[] = [];
+      try {
+        imageBuffers = await pdfData.toPNG({ scale, logging: true });
+        devLog(`Got ${imageBuffers.length} images from PDF`);
+        
+        // If we're missing pages, pdf2img might not be loading the PDF correctly
+        // Since pdf2img thinks there's only 1 page, we need a workaround
+        if (imageBuffers.length < actualPageCount && actualPageCount > 1) {
+          errorLog(`Missing pages! pdf2img only loaded ${pdfData.pages} of ${actualPageCount} pages.`);
+          errorLog(`This is a known issue with pdf2img-electron and certain PDF types.`);
+          
+          // Unfortunately, we can only process what pdf2img can see
+          // Log this for the user to know
+          const missingPageNote = `\n\n[NOTE: This PDF contains ${actualPageCount} pages, but only ${imageBuffers.length} could be processed due to pdf2img-electron limitations with mixed-orientation PDFs.]`;
+          
+          // We'll append this note to the OCR text later
+          devLog(`Will append note about missing pages to the final text`);
+        }
+        
+        // Log buffer sizes to detect potential issues
+        imageBuffers.forEach((buffer, index) => {
+          devLog(`Page ${index + 1} image size: ${buffer.length} bytes`);
+        });
+      } catch (conversionError) {
+        errorLog('Error converting PDF to images:', conversionError);
+        throw new Error(`Failed to convert PDF to images: ${conversionError}`);
+      }
+      
+      // Use macOS OCR on each image
+      const ocrTexts: string[] = [];
+      for (let i = 0; i < imageBuffers.length; i++) {
+        devLog(`Processing page ${i + 1} of ${imageBuffers.length}`);
+        
+        // Check if buffer is valid
+        if (!imageBuffers[i] || imageBuffers[i].length === 0) {
+          errorLog(`WARNING: Page ${i + 1} has empty or invalid image buffer`);
+          ocrTexts.push(`[Page ${i + 1} could not be converted to image]`);
+          continue;
+        }
+        
+        // Save image to temporary file for OCR in session directory
+        const tempPath = path.join(sessionDir!, `page${i + 1}.png`);
+        
+        try {
+          await fs.promises.writeFile(tempPath, imageBuffers[i]);
+        } catch (writeError) {
+          errorLog(`Failed to write page ${i + 1} to temp file:`, writeError);
+          ocrTexts.push(`[Error saving page ${i + 1}]`);
+          continue;
+        }
+        
+        try {
+          // OCR the image with accurate recognition mode
+          const result = await MacOCR.recognizeFromPath(tempPath, {
+            recognitionLevel: MacOCR.RECOGNITION_LEVEL_ACCURATE,
+            languages: 'en-US',
+            minConfidence: 0.0  // Accept all text, let LLM filter
+          });
+          
+          if (result && typeof result === 'string') {
+            ocrTexts.push(result);
+          } else if (result && typeof result === 'object' && 'text' in result) {
+            ocrTexts.push((result as any).text);
+          } else {
+            devLog(`Warning: No text extracted from page ${i + 1}`);
+          }
+        } catch (pageError) {
+          errorLog(`Failed to OCR page ${i + 1}:`, pageError);
+          // Continue with other pages instead of failing completely
+          ocrTexts.push(`[Error processing page ${i + 1}]`);
+        }
+      }
+      
+      // Join all text from all pages
+      let fullText = ocrTexts.join('\n\n');
+      
+      // Verify we processed all pages
+      if (ocrTexts.length !== imageBuffers.length) {
+        errorLog(`Warning: Page count mismatch! Expected ${imageBuffers.length} pages, processed ${ocrTexts.length}`);
+      }
+      
+      // Add note about missing pages if applicable
+      if (imageBuffers.length < actualPageCount && actualPageCount > 1) {
+        fullText += `\n\n[NOTE: This PDF contains ${actualPageCount} pages, but only ${imageBuffers.length} could be processed due to pdf2img-electron limitations with mixed-orientation PDFs.]`;
+      }
+      
+      devLog(`OCR completed: ${ocrTexts.length}/${imageBuffers.length} pages, ${fullText.length} characters`);
+      
+      // Clean up session directory
+      if (sessionDir) {
+        try {
+          await fs.promises.rm(sessionDir, { recursive: true, force: true });
+          devLog(`Cleaned up session directory: ${sessionDir}`);
+        } catch (cleanupError) {
+          devLog(`Warning: Failed to clean up session directory ${sessionDir}:`, cleanupError);
+        }
+      }
+      
+      return fullText;
+    } catch (error) {
+      errorLog('OCR error:', error);
+      
+      // Clean up session directory on error
+      if (sessionDir) {
+        try {
+          await fs.promises.rm(sessionDir, { recursive: true, force: true });
+        } catch (cleanupError) {
+          devLog(`Warning: Failed to clean up session directory on error:`, cleanupError);
+        }
+      }
+      
+      throw new Error(`OCR failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
   }
 
   // Graph nodes with configuration closure
@@ -258,167 +427,4 @@ async function extractTextWithPDF2JSON(filePath: string): Promise<string> {
   });
 }
 
-async function ocrPDF(filePath: string): Promise<string> {
-  // Check if running on macOS
-  if (process.platform !== 'darwin') {
-    throw new Error('OCR functionality is only available on macOS. Please ensure PDF files contain extractable text.');
-  }
-  
-  let sessionDir: string | null = null;
-  
-  try {
-    devLog('Starting OCR process for:', filePath);
-    
-    // Import pdf2img-electron in main process
-    const pdf2img = require('pdf2img-electron');
-    
-    // Generate unique identifier for this PDF processing session
-    const sessionId = `${Date.now()}-${Math.random().toString(36).substring(7)}`;
-    
-    // Create unique temp directory for this session
-    sessionDir = path.join(os.tmpdir(), `pdf-ocr-${sessionId}`);
-    await fs.promises.mkdir(sessionDir, { recursive: true });
-    devLog(`Created session directory: ${sessionDir}`);
-    
-    const pdfData = pdf2img.default(filePath);
-    devLog(`PDF loaded: ${pdfData.pages} pages`);
-    
-    // First, let's check the actual page count with pdf2json for comparison
-    let actualPageCount = pdfData.pages;
-    try {
-      const pdfParser = new PDFParser();
-      const pdfInfo = await new Promise<number>((resolve) => {
-        pdfParser.on('pdfParser_dataReady', (data: any) => {
-          resolve(data.Pages ? data.Pages.length : 1);
-        });
-        pdfParser.on('pdfParser_dataError', () => resolve(pdfData.pages));
-        pdfParser.loadPDF(filePath);
-      });
-      
-      if (pdfInfo > pdfData.pages) {
-        errorLog(`CRITICAL: pdf2img sees ${pdfData.pages} pages but pdf2json sees ${pdfInfo} pages!`);
-        actualPageCount = pdfInfo;
-      }
-    } catch (e) {
-      devLog('Could not verify page count with pdf2json');
-    }
-    
-    // Convert to PNG buffers
-    // Note: You may see "tile memory limits exceeded" warnings from Chromium at scale 3.0
-    // These are harmless for our use case - they just mean Chromium's internal tile buffer
-    // is conservative. The full image is still rendered correctly for OCR.
-    let imageBuffers: Buffer[] = [];
-    try {
-      imageBuffers = await pdfData.toPNG({ scale: 3.0, logging: true });
-      devLog(`Got ${imageBuffers.length} images from PDF`);
-      
-      // If we're missing pages, pdf2img might not be loading the PDF correctly
-      // Since pdf2img thinks there's only 1 page, we need a workaround
-      if (imageBuffers.length < actualPageCount && actualPageCount > 1) {
-        errorLog(`Missing pages! pdf2img only loaded ${pdfData.pages} of ${actualPageCount} pages.`);
-        errorLog(`This is a known issue with pdf2img-electron and certain PDF types.`);
-        
-        // Unfortunately, we can only process what pdf2img can see
-        // Log this for the user to know
-        const missingPageNote = `\n\n[NOTE: This PDF contains ${actualPageCount} pages, but only ${imageBuffers.length} could be processed due to pdf2img-electron limitations with mixed-orientation PDFs.]`;
-        
-        // We'll append this note to the OCR text later
-        devLog(`Will append note about missing pages to the final text`);
-      }
-      
-      // Log buffer sizes to detect potential issues
-      imageBuffers.forEach((buffer, index) => {
-        devLog(`Page ${index + 1} image size: ${buffer.length} bytes`);
-      });
-    } catch (conversionError) {
-      errorLog('Error converting PDF to images:', conversionError);
-      throw new Error(`Failed to convert PDF to images: ${conversionError}`);
-    }
-    
-    // Use macOS OCR on each image
-    const ocrTexts: string[] = [];
-    for (let i = 0; i < imageBuffers.length; i++) {
-      devLog(`Processing page ${i + 1} of ${imageBuffers.length}`);
-      
-      // Check if buffer is valid
-      if (!imageBuffers[i] || imageBuffers[i].length === 0) {
-        errorLog(`WARNING: Page ${i + 1} has empty or invalid image buffer`);
-        ocrTexts.push(`[Page ${i + 1} could not be converted to image]`);
-        continue;
-      }
-      
-      // Save image to temporary file for OCR in session directory
-      const tempPath = path.join(sessionDir!, `page${i + 1}.png`);
-      
-      try {
-        await fs.promises.writeFile(tempPath, imageBuffers[i]);
-      } catch (writeError) {
-        errorLog(`Failed to write page ${i + 1} to temp file:`, writeError);
-        ocrTexts.push(`[Error saving page ${i + 1}]`);
-        continue;
-      }
-      
-      try {
-        // OCR the image with accurate recognition mode
-        const result = await MacOCR.recognizeFromPath(tempPath, {
-          recognitionLevel: MacOCR.RECOGNITION_LEVEL_ACCURATE,
-          languages: 'en-US',
-          minConfidence: 0.0  // Accept all text, let LLM filter
-        });
-        
-        if (result && typeof result === 'string') {
-          ocrTexts.push(result);
-        } else if (result && typeof result === 'object' && 'text' in result) {
-          ocrTexts.push((result as any).text);
-        } else {
-          devLog(`Warning: No text extracted from page ${i + 1}`);
-        }
-      } catch (pageError) {
-        errorLog(`Failed to OCR page ${i + 1}:`, pageError);
-        // Continue with other pages instead of failing completely
-        ocrTexts.push(`[Error processing page ${i + 1}]`);
-      }
-    }
-    
-    // Join all text from all pages
-    let fullText = ocrTexts.join('\n\n');
-    
-    // Verify we processed all pages
-    if (ocrTexts.length !== imageBuffers.length) {
-      errorLog(`Warning: Page count mismatch! Expected ${imageBuffers.length} pages, processed ${ocrTexts.length}`);
-    }
-    
-    // Add note about missing pages if applicable
-    if (imageBuffers.length < actualPageCount && actualPageCount > 1) {
-      fullText += `\n\n[NOTE: This PDF contains ${actualPageCount} pages, but only ${imageBuffers.length} could be processed due to pdf2img-electron limitations with mixed-orientation PDFs.]`;
-    }
-    
-    devLog(`OCR completed: ${ocrTexts.length}/${imageBuffers.length} pages, ${fullText.length} characters`);
-    
-    // Clean up session directory
-    if (sessionDir) {
-      try {
-        await fs.promises.rm(sessionDir, { recursive: true, force: true });
-        devLog(`Cleaned up session directory: ${sessionDir}`);
-      } catch (cleanupError) {
-        devLog(`Warning: Failed to clean up session directory ${sessionDir}:`, cleanupError);
-      }
-    }
-    
-    return fullText;
-  } catch (error) {
-    errorLog('OCR error:', error);
-    
-    // Clean up session directory on error
-    if (sessionDir) {
-      try {
-        await fs.promises.rm(sessionDir, { recursive: true, force: true });
-      } catch (cleanupError) {
-        devLog(`Warning: Failed to clean up session directory on error:`, cleanupError);
-      }
-    }
-    
-    throw new Error(`OCR failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
-  }
-}
 

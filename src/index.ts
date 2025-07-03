@@ -35,13 +35,14 @@ let isProcessing = false;
 
 // Pipeline instance - cached and reused
 let pdfPipeline: ReturnType<typeof createPDFPipeline> | null = null;
-let currentPipelineConfig = { openaiApiKey: '', llmModel: '', useLowercase: true };
+let currentPipelineConfig = { openaiApiKey: '', llmModel: '', useLowercase: true, processingMode: 'accuracy' };
 
 // Configuration
 let WATCH_FOLDER = (store as any).get('watchFolder', path.join(os.homedir(), 'Documents', 'inbox')) as string;
 let OPENAI_API_KEY = process.env.OPENAI_API_KEY || (store as any).get('openaiApiKey', '') as string;
 let LLM_MODEL = process.env.LLM_MODEL || (store as any).get('llmModel', 'gpt-4.1-nano') as string;
 let USE_LOWERCASE = (store as any).get('useLowercase', true) as boolean;
+let PROCESSING_MODE = (store as any).get('processingMode', 'accuracy') as string; // 'accuracy' or 'speed'
 
 // Log startup configuration
 devLog('Startup configuration:');
@@ -49,20 +50,23 @@ devLog('- Watch folder:', WATCH_FOLDER);
 devLog('- OpenAI API key:', OPENAI_API_KEY ? 'Set' : 'Not set');
 devLog('- LLM Model:', LLM_MODEL);
 devLog('- Use lowercase:', USE_LOWERCASE);
+devLog('- Processing mode:', PROCESSING_MODE);
 
 // Initialize pipeline with current config
 function initializePipeline() {
   if (!pdfPipeline || 
       currentPipelineConfig.openaiApiKey !== OPENAI_API_KEY || 
       currentPipelineConfig.llmModel !== LLM_MODEL ||
-      currentPipelineConfig.useLowercase !== USE_LOWERCASE) {
+      currentPipelineConfig.useLowercase !== USE_LOWERCASE ||
+      currentPipelineConfig.processingMode !== PROCESSING_MODE) {
     devLog('Creating new PDF pipeline with updated configuration');
     devLog('API Key configured:', !!OPENAI_API_KEY);
     devLog('Model:', LLM_MODEL);
+    devLog('Processing mode:', PROCESSING_MODE);
     mainWindow?.webContents.send('debug-log', `API Key: ${OPENAI_API_KEY ? 'Configured' : 'Not configured'}, Model: ${LLM_MODEL}`);
     
-    pdfPipeline = createPDFPipeline(OPENAI_API_KEY, LLM_MODEL, USE_LOWERCASE);
-    currentPipelineConfig = { openaiApiKey: OPENAI_API_KEY, llmModel: LLM_MODEL, useLowercase: USE_LOWERCASE };
+    pdfPipeline = createPDFPipeline(OPENAI_API_KEY, LLM_MODEL, USE_LOWERCASE, PROCESSING_MODE);
+    currentPipelineConfig = { openaiApiKey: OPENAI_API_KEY, llmModel: LLM_MODEL, useLowercase: USE_LOWERCASE, processingMode: PROCESSING_MODE };
   }
   return pdfPipeline;
 }
@@ -200,16 +204,30 @@ const setupWatcher = () => {
     devLog('PDF detected:', filePath);
     mainWindow?.webContents.send('pdf-added', filePath);
     
-    // Add to processing queue
-    processingQueue.push({
-      filePath,
-      addedAt: new Date()
-    });
-    
-    devLog(`Added to queue: ${filePath} (Queue size: ${processingQueue.length})`);
-    
-    // Start processing the queue
-    processQueue();
+    if (PROCESSING_MODE === 'speed') {
+      // Parallel processing - process immediately
+      devLog('Processing in parallel mode (speed)');
+      processPDFFile(filePath).catch(error => {
+        errorLog('Error processing PDF:', error);
+        mainWindow?.webContents.send('processing-update', {
+          path: filePath,
+          status: 'error',
+          error: error instanceof Error ? error.message : 'Unknown error'
+        });
+      });
+    } else {
+      // Sequential processing - use queue
+      devLog('Processing in sequential mode (accuracy)');
+      processingQueue.push({
+        filePath,
+        addedAt: new Date()
+      });
+      
+      devLog(`Added to queue: ${filePath} (Queue size: ${processingQueue.length})`);
+      
+      // Start processing the queue
+      processQueue();
+    }
   });
   
   watcher.on('error', (error: Error) => {
@@ -265,6 +283,7 @@ ipcMain.handle('get-config', () => ({
   openaiApiKey: OPENAI_API_KEY,
   llmModel: LLM_MODEL,
   useLowercase: USE_LOWERCASE,
+  processingMode: PROCESSING_MODE,
 }));
 
 ipcMain.handle('update-config', (_event, config) => {
@@ -286,6 +305,10 @@ ipcMain.handle('update-config', (_event, config) => {
     (store as any).set('useLowercase', config.useLowercase);
     USE_LOWERCASE = config.useLowercase;
   }
+  if (config.processingMode) {
+    (store as any).set('processingMode', config.processingMode);
+    PROCESSING_MODE = config.processingMode;
+  }
   
   // Restart watcher if folder changed
   if (config.watchFolder && config.watchFolder !== oldWatchFolder) {
@@ -300,10 +323,11 @@ ipcMain.handle('update-config', (_event, config) => {
     setupWatcher();
   }
   
-  // Reinitialize pipeline if API key, model, or lowercase setting changed
+  // Reinitialize pipeline if API key, model, lowercase setting, or processing mode changed
   if ((config.openaiApiKey && config.openaiApiKey !== currentPipelineConfig.openaiApiKey) ||
       (config.llmModel && config.llmModel !== currentPipelineConfig.llmModel) ||
-      (config.useLowercase !== undefined && config.useLowercase !== currentPipelineConfig.useLowercase)) {
+      (config.useLowercase !== undefined && config.useLowercase !== currentPipelineConfig.useLowercase) ||
+      (config.processingMode && config.processingMode !== currentPipelineConfig.processingMode)) {
     pdfPipeline = null; // Force recreation on next use
   }
   

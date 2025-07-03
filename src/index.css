@@ -360,6 +360,14 @@ body {
   color: #d73502;
 }
 
+.form-help {
+  display: block;
+  margin-top: 0.25rem;
+  font-size: 0.75rem;
+  color: #666;
+  font-style: italic;
+}
+
 .banner-content {
   display: flex;
   align-items: center;

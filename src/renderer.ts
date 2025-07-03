@@ -65,11 +65,13 @@ class PDFRenamerApp {
     const watchFolderInput = document.getElementById('watch-folder-input') as HTMLInputElement;
     const apiKeyInput = document.getElementById('api-key-input') as HTMLInputElement;
     const modelSelect = document.getElementById('model-select') as HTMLSelectElement;
+    const processingModeSelect = document.getElementById('processing-mode-select') as HTMLSelectElement;
     const lowercaseCheckbox = document.getElementById('lowercase-checkbox') as HTMLInputElement;
     
     if (watchFolderInput) watchFolderInput.value = this.config.watchFolder || '';
     if (apiKeyInput) apiKeyInput.value = this.config.openaiApiKey || '';
     if (modelSelect) modelSelect.value = this.config.llmModel || 'gpt-4.1-nano';
+    if (processingModeSelect) processingModeSelect.value = this.config.processingMode || 'accuracy';
     if (lowercaseCheckbox) lowercaseCheckbox.checked = this.config.useLowercase !== false; // Default to true
     
     // Show/hide API key banner based on model selection
@@ -132,6 +134,7 @@ class PDFRenamerApp {
       const watchFolder = (document.getElementById('watch-folder-input') as HTMLInputElement).value;
       const openaiApiKey = (document.getElementById('api-key-input') as HTMLInputElement).value;
       const llmModel = (document.getElementById('model-select') as HTMLSelectElement).value;
+      const processingMode = (document.getElementById('processing-mode-select') as HTMLSelectElement).value;
       const useLowercase = (document.getElementById('lowercase-checkbox') as HTMLInputElement).checked;
       
       try {
@@ -139,10 +142,11 @@ class PDFRenamerApp {
           watchFolder,
           openaiApiKey,
           llmModel,
+          processingMode,
           useLowercase
         });
         
-        this.config = { watchFolder, openaiApiKey, llmModel, useLowercase };
+        this.config = { watchFolder, openaiApiKey, llmModel, processingMode, useLowercase };
         this.updateUI();
         document.getElementById('settings-modal')?.classList.add('hidden');
         
