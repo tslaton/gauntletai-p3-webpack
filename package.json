@@ -47,6 +47,7 @@
     "@cherrystudio/mac-system-ocr": "^0.2.2",
     "@langchain/core": "^0.3.61",
     "@langchain/langgraph": "^0.3.6",
+    "@langchain/ollama": "^0.2.3",
     "@langchain/openai": "^0.5.16",
     "chokidar": "^4.0.3",
     "electron-squirrel-startup": "^1.0.1",

@@ -11,6 +11,7 @@ declare global {
       selectFolder: () => Promise<string | null>;
       showNotification: (title: string, body: string) => Promise<void>;
       openFolder: () => Promise<void>;
+      getOllamaModels: () => Promise<any[]>;
       processPDF: (filePath: string) => Promise<void>;
       onPDFAdded: (callback: (filePath: string) => void) => void;
       onProcessingUpdate: (callback: (data: any) => void) => void;
@@ -43,6 +44,10 @@ class PDFRenamerApp {
     try {
       // Load configuration
       this.config = await window.electronAPI.getConfig();
+      // Load Ollama models if an Ollama model is selected
+      if (this.config.llmModel?.startsWith('ollama:')) {
+        await this.loadOllamaModels();
+      }
       this.updateUI();
     } catch (error) {
       errorLog('Failed to initialize app:', error);
@@ -67,10 +72,13 @@ class PDFRenamerApp {
     if (modelSelect) modelSelect.value = this.config.llmModel || 'gpt-4.1-nano';
     if (lowercaseCheckbox) lowercaseCheckbox.checked = this.config.useLowercase !== false; // Default to true
     
-    // Show/hide API key banner
+    // Show/hide API key banner based on model selection
     const banner = document.getElementById('api-key-banner');
     if (banner) {
-      if (!this.config.openaiApiKey) {
+      const selectedModel = this.config.llmModel || 'gpt-4.1-nano';
+      const isOpenAIModel = !selectedModel.startsWith('ollama:');
+      
+      if (!this.config.openaiApiKey && isOpenAIModel) {
         banner.classList.remove('hidden');
       } else {
         banner.classList.add('hidden');
@@ -80,13 +88,29 @@ class PDFRenamerApp {
   
   private setupEventListeners() {
     // Settings button
-    document.getElementById('settings-btn')?.addEventListener('click', () => {
+    document.getElementById('settings-btn')?.addEventListener('click', async () => {
+      await this.loadOllamaModels();
       document.getElementById('settings-modal')?.classList.remove('hidden');
+      // Re-set the model value after loading Ollama models
+      const modelSelect = document.getElementById('model-select') as HTMLSelectElement;
+      if (modelSelect && this.config.llmModel) {
+        modelSelect.value = this.config.llmModel;
+        // Trigger change event to update API key field state
+        modelSelect.dispatchEvent(new Event('change'));
+      }
     });
     
     // Banner settings button
-    document.getElementById('banner-settings-btn')?.addEventListener('click', () => {
+    document.getElementById('banner-settings-btn')?.addEventListener('click', async () => {
+      await this.loadOllamaModels();
       document.getElementById('settings-modal')?.classList.remove('hidden');
+      // Re-set the model value after loading Ollama models
+      const modelSelect = document.getElementById('model-select') as HTMLSelectElement;
+      if (modelSelect && this.config.llmModel) {
+        modelSelect.value = this.config.llmModel;
+        // Trigger change event to update API key field state
+        modelSelect.dispatchEvent(new Event('change'));
+      }
     });
     
     // Close settings
@@ -138,6 +162,19 @@ class PDFRenamerApp {
     document.getElementById('settings-modal')?.addEventListener('click', (e) => {
       if (e.target === e.currentTarget) {
         document.getElementById('settings-modal')?.classList.add('hidden');
+      }
+    });
+    
+    // Update API key requirement when model changes
+    document.getElementById('model-select')?.addEventListener('change', (e) => {
+      const selectedModel = (e.target as HTMLSelectElement).value;
+      const apiKeyInput = document.getElementById('api-key-input') as HTMLInputElement;
+      const isOllamaModel = selectedModel.startsWith('ollama:');
+      
+      // Update API key input requirement indicator
+      if (apiKeyInput) {
+        apiKeyInput.placeholder = isOllamaModel ? 'Not required for Ollama' : 'sk-...';
+        apiKeyInput.disabled = isOllamaModel;
       }
     });
   }
@@ -223,6 +260,52 @@ class PDFRenamerApp {
         </div>
       `)
       .join('');
+  }
+  
+  private async loadOllamaModels() {
+    const selectEl = document.getElementById('model-select') as HTMLSelectElement;
+    const statusEl = document.getElementById('ollama-status');
+    
+    try {
+      // Request Ollama models from main process
+      const models = await window.electronAPI.getOllamaModels();
+      
+      if (models && models.length > 0) {
+        // Remove existing Ollama optgroup if it exists
+        const existingOllama = selectEl.querySelector('optgroup[label="Ollama (Local)"]');
+        if (existingOllama) {
+          existingOllama.remove();
+        }
+        
+        // Create new optgroup with fetched models
+        const ollamaGroup = document.createElement('optgroup');
+        ollamaGroup.label = 'Ollama (Local)';
+        
+        models.forEach((model: any) => {
+          const option = document.createElement('option');
+          option.value = `ollama:${model.name}`;
+          option.textContent = model.name;
+          ollamaGroup.appendChild(option);
+        });
+        
+        selectEl.appendChild(ollamaGroup);
+        
+        if (statusEl) {
+          statusEl.textContent = `✓ ${models.length} Ollama model${models.length > 1 ? 's' : ''} available`;
+          statusEl.classList.remove('error');
+        }
+      } else {
+        if (statusEl) {
+          statusEl.textContent = 'No Ollama models found. Install models with: ollama pull <model>';
+          statusEl.classList.add('error');
+        }
+      }
+    } catch (error) {
+      if (statusEl) {
+        statusEl.textContent = 'Ollama not running. Start with: ollama serve';
+        statusEl.classList.add('error');
+      }
+    }
   }
 }
 

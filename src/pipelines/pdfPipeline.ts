@@ -5,6 +5,7 @@ import os from 'node:os';
 import PDFParser from 'pdf2json';
 import MacOCR from '@cherrystudio/mac-system-ocr';
 import { ChatOpenAI } from '@langchain/openai';
+import { ChatOllama } from '@langchain/ollama';
 import { devLog, errorLog } from '../utils/logger';
 
 // State definition
@@ -27,11 +28,22 @@ export function createPDFPipeline(
   useLowercase: boolean = true
 ) {
   // Create the model instance once for this pipeline
-  const model = openaiApiKey ? new ChatOpenAI({
-    modelName: llmModel || 'gpt-4.1-nano',
-    temperature: 0,
-    openAIApiKey: openaiApiKey,
-  }) : null;
+  let model: ChatOpenAI | ChatOllama | null = null;
+  
+  // Check if it's an Ollama model
+  if (llmModel?.startsWith('ollama:')) {
+    const ollamaModel = llmModel.substring(7); // Remove 'ollama:' prefix
+    model = new ChatOllama({
+      model: ollamaModel,
+      temperature: 0,
+    });
+  } else if (openaiApiKey) {
+    model = new ChatOpenAI({
+      modelName: llmModel || 'gpt-4.1-nano',
+      temperature: 0,
+      openAIApiKey: openaiApiKey,
+    });
+  }
 
   // Graph nodes with configuration closure
   async function parsePDF(state: PDFState): Promise<Partial<PDFState>> {
@@ -41,9 +53,13 @@ export function createPDFPipeline(
       // First try with pdf2json
       const text = await extractTextWithPDF2JSON(state.path);
       
-      // If text is too short, use OCR
-      if (text.trim().length < 20) {
-        devLog('Text too short, using OCR fallback');
+      // Check if we got meaningful text
+      const cleanText = text.trim();
+      const hasMultiplePages = cleanText.includes('[Page 2]');
+      
+      // If text is too short or we detected multiple pages with no text, use OCR
+      if (cleanText.length < 20 || (hasMultiplePages && cleanText.length < 100)) {
+        devLog(`Text extraction insufficient (length: ${cleanText.length}, multiple pages: ${hasMultiplePages}), using OCR fallback`);
         const ocrText = await ocrPDF(state.path);
         return { rawText: ocrText };
       }
@@ -62,18 +78,31 @@ export function createPDFPipeline(
     }
     
     if (!model) {
-      devLog('LLM: OpenAI API key not configured, model is null');
-      return { error: 'OpenAI API key not configured' };
+      devLog('LLM: Model not configured');
+      return { error: 'LLM model not configured' };
     }
     
     devLog('Extracting metadata with LLM, text length:', state.rawText.length);
     
     try {
       const systemPrompt = `You are a parser that extracts three fields from documents:
-- date (yyyy-mm-dd; today if absent)
-- title (<= 8 words, no commas)
-- addressee (first name only; blank if unknown)
-Return JSON exactly like {"date":"...", "title":"...", "addressee":"..."}`;
+1. date (yyyy-mm-dd; null if absent)
+2. title (<= 8 words, no commas; if the title is not descriptive of the document, write the name of the bank, business, or otherentity sending the document and describe the document's main subject in a few words instead)
+3. addressees (<= 2 first names only, left blank if unknown; prefer proper names to generic terms like "customer")
+
+Prefer as addressees the names "Trevor", "Maryam", "Ghufran", and "Saira" if they are present in the document.
+
+Return JSON exactly like {"date":"...", "title":"...", "addressees":"..."}
+
+Here are some examples of the JSON format I need:
+
+{"date":"2025-01-01","title":"Wells Fargo Bank Statement","addressees":"Trevor"}
+{"date":"2017-06-03","title":"Chicago Title Company Closing Disclosure","addressees":"Maryam Trevor"}
+{"date":"2023-10-15","title":"PG&E Electric Bill and Statement","addressees":"Ghufran"}
+{"date":"2024-11-07","title":"GEICO Insurance Policy","addressees":"Saira"}
+{"date":null,"title":"Uplift Desk UPS Shipping Label","addressees":"Trevor"}
+{"date":null,"title":"Ameritas Disability Insurance Notice","addressees":""}
+`;
       
       const userPrompt = `Document text follows \`\`\`
 ${state.rawText.slice(0, 12000)}
@@ -87,11 +116,18 @@ ${state.rawText.slice(0, 12000)}
       const content = response.content.toString();
       const metadata = JSON.parse(content);
       
+      // Handle null date properly - use today's date if null, "null", or empty
+      const today = new Date().toISOString().split('T')[0];
+      const extractedDate = metadata.date;
+      const finalDate = (extractedDate && extractedDate !== 'null' && extractedDate !== '') 
+        ? extractedDate 
+        : today;
+      
       return {
         meta: {
-          date: metadata.date || new Date().toISOString().split('T')[0],
+          date: finalDate,
           title: (metadata.title || 'Untitled').slice(0, 100),
-          addressee: (metadata.addressee || 'Unknown').slice(0, 50)
+          addressee: (metadata.addressees || metadata.addressee || 'Unknown').slice(0, 50)
         }
       };
     } catch (error) {
@@ -109,7 +145,19 @@ ${state.rawText.slice(0, 12000)}
     
     try {
       const dir = path.dirname(state.path);
-      let newName = `${state.meta.date} ${state.meta.title} [${state.meta.addressee}].pdf`;
+      
+      // Process addressees: split by space, take first 2, remove duplicates
+      const addresseesList = state.meta.addressee.split(/\s+/)
+        .filter(name => name.length > 0)
+        .slice(0, 2);
+      
+      // Remove duplicates while preserving order
+      const uniqueAddressees = [...new Set(addresseesList)];
+      
+      // Format each addressee in its own brackets
+      const addresseesString = uniqueAddressees.map(name => `[${name}]`).join('');
+      
+      let newName = `${state.meta.date} ${state.meta.title} ${addresseesString}.pdf`;
       
       // Clean filename for filesystem
       let cleanName = newName.replace(/[<>:"/\\|?*]/g, '-');
@@ -181,18 +229,24 @@ async function extractTextWithPDF2JSON(filePath: string): Promise<string> {
       let text = '';
       
       if (pdfData.Pages) {
-        for (const page of pdfData.Pages) {
+        devLog(`pdf2json detected ${pdfData.Pages.length} pages in PDF`);
+        
+        for (let i = 0; i < pdfData.Pages.length; i++) {
+          const page = pdfData.Pages[i];
           if (page.Texts) {
+            let pageText = '';
             for (const textItem of page.Texts) {
               if (textItem.R) {
                 for (const r of textItem.R) {
                   if (r.T) {
-                    text += decodeURIComponent(r.T) + ' ';
+                    pageText += decodeURIComponent(r.T) + ' ';
                   }
                 }
               }
             }
-            text += '\n\n';
+            if (pageText.trim()) {
+              text += `[Page ${i + 1}]\n${pageText}\n\n`;
+            }
           }
         }
       }
@@ -210,50 +264,160 @@ async function ocrPDF(filePath: string): Promise<string> {
     throw new Error('OCR functionality is only available on macOS. Please ensure PDF files contain extractable text.');
   }
   
+  let sessionDir: string | null = null;
+  
   try {
     devLog('Starting OCR process for:', filePath);
     
     // Import pdf2img-electron in main process
     const pdf2img = require('pdf2img-electron');
+    
+    // Generate unique identifier for this PDF processing session
+    const sessionId = `${Date.now()}-${Math.random().toString(36).substring(7)}`;
+    
+    // Create unique temp directory for this session
+    sessionDir = path.join(os.tmpdir(), `pdf-ocr-${sessionId}`);
+    await fs.promises.mkdir(sessionDir, { recursive: true });
+    devLog(`Created session directory: ${sessionDir}`);
+    
     const pdfData = pdf2img.default(filePath);
     devLog(`PDF loaded: ${pdfData.pages} pages`);
     
+    // First, let's check the actual page count with pdf2json for comparison
+    let actualPageCount = pdfData.pages;
+    try {
+      const pdfParser = new PDFParser();
+      const pdfInfo = await new Promise<number>((resolve) => {
+        pdfParser.on('pdfParser_dataReady', (data: any) => {
+          resolve(data.Pages ? data.Pages.length : 1);
+        });
+        pdfParser.on('pdfParser_dataError', () => resolve(pdfData.pages));
+        pdfParser.loadPDF(filePath);
+      });
+      
+      if (pdfInfo > pdfData.pages) {
+        errorLog(`CRITICAL: pdf2img sees ${pdfData.pages} pages but pdf2json sees ${pdfInfo} pages!`);
+        actualPageCount = pdfInfo;
+      }
+    } catch (e) {
+      devLog('Could not verify page count with pdf2json');
+    }
+    
     // Convert to PNG buffers
-    const imageBuffers = await pdfData.toPNG({ scale: 2.0 });
-    devLog(`Got ${imageBuffers.length} images from PDF`);
+    // Note: You may see "tile memory limits exceeded" warnings from Chromium at scale 3.0
+    // These are harmless for our use case - they just mean Chromium's internal tile buffer
+    // is conservative. The full image is still rendered correctly for OCR.
+    let imageBuffers: Buffer[] = [];
+    try {
+      imageBuffers = await pdfData.toPNG({ scale: 3.0, logging: true });
+      devLog(`Got ${imageBuffers.length} images from PDF`);
+      
+      // If we're missing pages, pdf2img might not be loading the PDF correctly
+      // Since pdf2img thinks there's only 1 page, we need a workaround
+      if (imageBuffers.length < actualPageCount && actualPageCount > 1) {
+        errorLog(`Missing pages! pdf2img only loaded ${pdfData.pages} of ${actualPageCount} pages.`);
+        errorLog(`This is a known issue with pdf2img-electron and certain PDF types.`);
+        
+        // Unfortunately, we can only process what pdf2img can see
+        // Log this for the user to know
+        const missingPageNote = `\n\n[NOTE: This PDF contains ${actualPageCount} pages, but only ${imageBuffers.length} could be processed due to pdf2img-electron limitations with mixed-orientation PDFs.]`;
+        
+        // We'll append this note to the OCR text later
+        devLog(`Will append note about missing pages to the final text`);
+      }
+      
+      // Log buffer sizes to detect potential issues
+      imageBuffers.forEach((buffer, index) => {
+        devLog(`Page ${index + 1} image size: ${buffer.length} bytes`);
+      });
+    } catch (conversionError) {
+      errorLog('Error converting PDF to images:', conversionError);
+      throw new Error(`Failed to convert PDF to images: ${conversionError}`);
+    }
     
     // Use macOS OCR on each image
     const ocrTexts: string[] = [];
     for (let i = 0; i < imageBuffers.length; i++) {
       devLog(`Processing page ${i + 1} of ${imageBuffers.length}`);
       
-      // Save image to temporary file for OCR
-      const tempPath = path.join(os.tmpdir(), `ocr-temp-${Date.now()}-${i}.png`);
-      await fs.promises.writeFile(tempPath, imageBuffers[i]);
+      // Check if buffer is valid
+      if (!imageBuffers[i] || imageBuffers[i].length === 0) {
+        errorLog(`WARNING: Page ${i + 1} has empty or invalid image buffer`);
+        ocrTexts.push(`[Page ${i + 1} could not be converted to image]`);
+        continue;
+      }
+      
+      // Save image to temporary file for OCR in session directory
+      const tempPath = path.join(sessionDir!, `page${i + 1}.png`);
       
       try {
-        // OCR the image
-        const result = await MacOCR.recognizeFromPath(tempPath);
+        await fs.promises.writeFile(tempPath, imageBuffers[i]);
+      } catch (writeError) {
+        errorLog(`Failed to write page ${i + 1} to temp file:`, writeError);
+        ocrTexts.push(`[Error saving page ${i + 1}]`);
+        continue;
+      }
+      
+      try {
+        // OCR the image with accurate recognition mode
+        const result = await MacOCR.recognizeFromPath(tempPath, {
+          recognitionLevel: MacOCR.RECOGNITION_LEVEL_ACCURATE,
+          languages: 'en-US',
+          minConfidence: 0.0  // Accept all text, let LLM filter
+        });
+        
         if (result && typeof result === 'string') {
           ocrTexts.push(result);
         } else if (result && typeof result === 'object' && 'text' in result) {
           ocrTexts.push((result as any).text);
+        } else {
+          devLog(`Warning: No text extracted from page ${i + 1}`);
         }
-      } finally {
-        // Clean up temp file
-        try {
-          await fs.promises.unlink(tempPath);
-        } catch {}
+      } catch (pageError) {
+        errorLog(`Failed to OCR page ${i + 1}:`, pageError);
+        // Continue with other pages instead of failing completely
+        ocrTexts.push(`[Error processing page ${i + 1}]`);
       }
     }
     
     // Join all text from all pages
-    const fullText = ocrTexts.join('\n\n');
-    devLog(`OCR completed, extracted ${fullText.length} characters`);
+    let fullText = ocrTexts.join('\n\n');
+    
+    // Verify we processed all pages
+    if (ocrTexts.length !== imageBuffers.length) {
+      errorLog(`Warning: Page count mismatch! Expected ${imageBuffers.length} pages, processed ${ocrTexts.length}`);
+    }
+    
+    // Add note about missing pages if applicable
+    if (imageBuffers.length < actualPageCount && actualPageCount > 1) {
+      fullText += `\n\n[NOTE: This PDF contains ${actualPageCount} pages, but only ${imageBuffers.length} could be processed due to pdf2img-electron limitations with mixed-orientation PDFs.]`;
+    }
+    
+    devLog(`OCR completed: ${ocrTexts.length}/${imageBuffers.length} pages, ${fullText.length} characters`);
+    
+    // Clean up session directory
+    if (sessionDir) {
+      try {
+        await fs.promises.rm(sessionDir, { recursive: true, force: true });
+        devLog(`Cleaned up session directory: ${sessionDir}`);
+      } catch (cleanupError) {
+        devLog(`Warning: Failed to clean up session directory ${sessionDir}:`, cleanupError);
+      }
+    }
     
     return fullText;
   } catch (error) {
     errorLog('OCR error:', error);
+    
+    // Clean up session directory on error
+    if (sessionDir) {
+      try {
+        await fs.promises.rm(sessionDir, { recursive: true, force: true });
+      } catch (cleanupError) {
+        devLog(`Warning: Failed to clean up session directory on error:`, cleanupError);
+      }
+    }
+    
     throw new Error(`OCR failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
 }

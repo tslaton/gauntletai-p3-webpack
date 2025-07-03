@@ -8,6 +8,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   selectFolder: () => ipcRenderer.invoke('select-folder'),
   showNotification: (title: string, body: string) => ipcRenderer.invoke('show-notification', title, body),
   openFolder: () => ipcRenderer.invoke('open-folder'),
+  getOllamaModels: () => ipcRenderer.invoke('get-ollama-models'),
   
   // PDF processing
   processPDF: (filePath: string) => ipcRenderer.invoke('process-pdf', filePath),
