@@ -16,10 +16,12 @@ declare global {
       organizeFiles: () => Promise<{success: boolean, movedFiles?: number, error?: string}>;
       reorganizeAllFiles: () => Promise<{success: boolean, movedFiles?: number, error?: string}>;
       getInboxCount: () => Promise<number>;
+      getPipelineStates: () => Promise<{isPdfPipelineRunning: boolean, isOrganizationPipelineRunning: boolean, isReorganizationPipelineRunning: boolean}>;
       onPDFAdded: (callback: (filePath: string) => void) => void;
       onProcessingUpdate: (callback: (data: any) => void) => void;
       onDebugLog: (callback: (message: string) => void) => void;
       onOrganizationStatus: (callback: (data: any) => void) => void;
+      onPipelineStateChanged: (callback: (states: any) => void) => void;
       sendDebugMessage: (message: string) => void;
     };
   }
@@ -37,11 +39,17 @@ interface ActivityItem {
 class PDFRenamerApp {
   private activities: ActivityItem[] = [];
   private config: any = {};
+  private pipelineStates = {
+    isPdfPipelineRunning: false,
+    isOrganizationPipelineRunning: false,
+    isReorganizationPipelineRunning: false
+  };
   
   constructor() {
     this.initializeApp();
     this.setupEventListeners();
     this.setupIPCListeners();
+    this.checkInitialPipelineStates();
   }
   
   private async initializeApp() {
@@ -97,6 +105,39 @@ class PDFRenamerApp {
         banner.classList.add('hidden');
       }
     }
+    
+    // Update button states based on pipeline states
+    this.updateButtonStates();
+  }
+  
+  private async checkInitialPipelineStates() {
+    try {
+      const states = await window.electronAPI.getPipelineStates();
+      this.pipelineStates = states;
+      this.updateButtonStates();
+    } catch (error) {
+      errorLog('Failed to get initial pipeline states:', error);
+    }
+  }
+  
+  private updateButtonStates() {
+    const organizeButton = document.getElementById('organize-now') as HTMLButtonElement;
+    const reorganizeButton = document.getElementById('reorganize-all') as HTMLButtonElement;
+    
+    // Disable buttons if any pipeline is running
+    const anyPipelineRunning = this.pipelineStates.isPdfPipelineRunning || 
+                              this.pipelineStates.isOrganizationPipelineRunning || 
+                              this.pipelineStates.isReorganizationPipelineRunning;
+    
+    organizeButton.disabled = anyPipelineRunning;
+    reorganizeButton.disabled = anyPipelineRunning;
+    // if (organizeButton && !organizeButton.textContent?.includes('Organizing...')) {
+    //   organizeButton.disabled = anyPipelineRunning;
+    // }
+    
+    // if (reorganizeButton && !reorganizeButton.textContent?.includes('Reorganizing...')) {
+    //   reorganizeButton.disabled = anyPipelineRunning;
+    // }
   }
   
   private setupEventListeners() {
@@ -202,7 +243,6 @@ class PDFRenamerApp {
         errorLog('Failed to organize files:', error);
       } finally {
         if (button) {
-          button.disabled = false;
           button.textContent = 'Organize Now';
         }
         await this.updateInboxCount();
@@ -246,7 +286,6 @@ class PDFRenamerApp {
         errorLog('Failed to reorganize files:', error);
       } finally {
         if (button) {
-          button.disabled = false;
           button.textContent = '🔄 Reorganize All Files';
         }
         await this.updateInboxCount();
@@ -333,6 +372,12 @@ class PDFRenamerApp {
       if (data.status === 'complete') {
         await this.updateInboxCount();
       }
+    });
+    
+    // Listen for pipeline state changes
+    window.electronAPI.onPipelineStateChanged((states) => {
+      this.pipelineStates = states;
+      this.updateButtonStates();
     });
   }
   
