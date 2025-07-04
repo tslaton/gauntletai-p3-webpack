@@ -23,7 +23,20 @@
           <h2>Watch Folder</h2>
           <div class="folder-info">
             <span id="folder-path" class="folder-path">Loading...</span>
-            <button id="open-folder" class="btn btn-primary">Open Folder</button>
+            <button id="open-folder" class="btn btn-secondary">Open Folder</button>
+          </div>
+        </div>
+        
+        <div class="organization-controls">
+          <h2>Organization</h2>
+          <div class="org-info">
+            <span id="inbox-count" class="inbox-count">0 files in inbox</span>
+            <div class="org-buttons">
+              <button id="reorganize-all" class="btn btn-warning" title="Analyzes all files and reorganizes them into optimal categories">
+                🔄 Reorganize All Files
+              </button>
+              <button id="organize-now" class="btn btn-primary" title="Organize files in File Wrangler's inbox">Organize Now</button>
+            </div>
           </div>
         </div>
         
@@ -81,6 +94,20 @@
                 <input type="checkbox" id="lowercase-checkbox" checked>
                 <span>Use lowercase filenames</span>
               </label>
+            </div>
+            
+            <div class="form-group">
+              <label class="checkbox-label">
+                <input type="checkbox" id="auto-organize-checkbox" checked>
+                <span>Auto-organize files</span>
+              </label>
+              <small class="form-help">Automatically organize files when inbox reaches threshold</small>
+            </div>
+            
+            <div class="form-group">
+              <label for="auto-organize-threshold">Auto-organize threshold</label>
+              <input type="number" id="auto-organize-threshold" min="1" max="100" value="10">
+              <small class="form-help">Number of files in inbox before auto-organization triggers</small>
             </div>
           </div>
           <div class="modal-footer">

@@ -13,9 +13,15 @@ declare global {
       openFolder: () => Promise<void>;
       getOllamaModels: () => Promise<any[]>;
       processPDF: (filePath: string) => Promise<void>;
+      organizeFiles: () => Promise<{success: boolean, movedFiles?: number, error?: string}>;
+      reorganizeAllFiles: () => Promise<{success: boolean, movedFiles?: number, error?: string}>;
+      getInboxCount: () => Promise<number>;
+      getPipelineStates: () => Promise<{isPdfPipelineRunning: boolean, isOrganizationPipelineRunning: boolean, isReorganizationPipelineRunning: boolean}>;
       onPDFAdded: (callback: (filePath: string) => void) => void;
       onProcessingUpdate: (callback: (data: any) => void) => void;
       onDebugLog: (callback: (message: string) => void) => void;
+      onOrganizationStatus: (callback: (data: any) => void) => void;
+      onPipelineStateChanged: (callback: (states: any) => void) => void;
       sendDebugMessage: (message: string) => void;
     };
   }
@@ -33,11 +39,17 @@ interface ActivityItem {
 class PDFRenamerApp {
   private activities: ActivityItem[] = [];
   private config: any = {};
+  private pipelineStates = {
+    isPdfPipelineRunning: false,
+    isOrganizationPipelineRunning: false,
+    isReorganizationPipelineRunning: false
+  };
   
   constructor() {
     this.initializeApp();
     this.setupEventListeners();
     this.setupIPCListeners();
+    this.checkInitialPipelineStates();
   }
   
   private async initializeApp() {
@@ -61,18 +73,25 @@ class PDFRenamerApp {
       folderPathEl.textContent = this.config.watchFolder || 'Not configured';
     }
     
+    // Update inbox count
+    this.updateInboxCount();
+    
     // Update settings modal
     const watchFolderInput = document.getElementById('watch-folder-input') as HTMLInputElement;
     const apiKeyInput = document.getElementById('api-key-input') as HTMLInputElement;
     const modelSelect = document.getElementById('model-select') as HTMLSelectElement;
     const processingModeSelect = document.getElementById('processing-mode-select') as HTMLSelectElement;
     const lowercaseCheckbox = document.getElementById('lowercase-checkbox') as HTMLInputElement;
+    const autoOrganizeCheckbox = document.getElementById('auto-organize-checkbox') as HTMLInputElement;
+    const autoOrganizeThreshold = document.getElementById('auto-organize-threshold') as HTMLInputElement;
     
     if (watchFolderInput) watchFolderInput.value = this.config.watchFolder || '';
     if (apiKeyInput) apiKeyInput.value = this.config.openaiApiKey || '';
     if (modelSelect) modelSelect.value = this.config.llmModel || 'gpt-4.1-nano';
     if (processingModeSelect) processingModeSelect.value = this.config.processingMode || 'accuracy';
     if (lowercaseCheckbox) lowercaseCheckbox.checked = this.config.useLowercase !== false; // Default to true
+    if (autoOrganizeCheckbox) autoOrganizeCheckbox.checked = this.config.autoOrganize !== false; // Default to true
+    if (autoOrganizeThreshold) autoOrganizeThreshold.value = String(this.config.autoOrganizeThreshold || 10);
     
     // Show/hide API key banner based on model selection
     const banner = document.getElementById('api-key-banner');
@@ -86,6 +105,39 @@ class PDFRenamerApp {
         banner.classList.add('hidden');
       }
     }
+    
+    // Update button states based on pipeline states
+    this.updateButtonStates();
+  }
+  
+  private async checkInitialPipelineStates() {
+    try {
+      const states = await window.electronAPI.getPipelineStates();
+      this.pipelineStates = states;
+      this.updateButtonStates();
+    } catch (error) {
+      errorLog('Failed to get initial pipeline states:', error);
+    }
+  }
+  
+  private updateButtonStates() {
+    const organizeButton = document.getElementById('organize-now') as HTMLButtonElement;
+    const reorganizeButton = document.getElementById('reorganize-all') as HTMLButtonElement;
+    
+    // Disable buttons if any pipeline is running
+    const anyPipelineRunning = this.pipelineStates.isPdfPipelineRunning || 
+                              this.pipelineStates.isOrganizationPipelineRunning || 
+                              this.pipelineStates.isReorganizationPipelineRunning;
+    
+    organizeButton.disabled = anyPipelineRunning;
+    reorganizeButton.disabled = anyPipelineRunning;
+    // if (organizeButton && !organizeButton.textContent?.includes('Organizing...')) {
+    //   organizeButton.disabled = anyPipelineRunning;
+    // }
+    
+    // if (reorganizeButton && !reorganizeButton.textContent?.includes('Reorganizing...')) {
+    //   reorganizeButton.disabled = anyPipelineRunning;
+    // }
   }
   
   private setupEventListeners() {
@@ -136,6 +188,8 @@ class PDFRenamerApp {
       const llmModel = (document.getElementById('model-select') as HTMLSelectElement).value;
       const processingMode = (document.getElementById('processing-mode-select') as HTMLSelectElement).value;
       const useLowercase = (document.getElementById('lowercase-checkbox') as HTMLInputElement).checked;
+      const autoOrganize = (document.getElementById('auto-organize-checkbox') as HTMLInputElement).checked;
+      const autoOrganizeThreshold = parseInt((document.getElementById('auto-organize-threshold') as HTMLInputElement).value) || 10;
       
       try {
         await window.electronAPI.updateConfig({
@@ -143,10 +197,12 @@ class PDFRenamerApp {
           openaiApiKey,
           llmModel,
           processingMode,
-          useLowercase
+          useLowercase,
+          autoOrganize,
+          autoOrganizeThreshold
         });
         
-        this.config = { watchFolder, openaiApiKey, llmModel, processingMode, useLowercase };
+        this.config = { watchFolder, openaiApiKey, llmModel, processingMode, useLowercase, autoOrganize, autoOrganizeThreshold };
         this.updateUI();
         document.getElementById('settings-modal')?.classList.add('hidden');
         
@@ -160,6 +216,80 @@ class PDFRenamerApp {
     // Open folder button
     document.getElementById('open-folder')?.addEventListener('click', () => {
       window.electronAPI.openFolder();
+    });
+    
+    // Organize now button
+    document.getElementById('organize-now')?.addEventListener('click', async () => {
+      const button = document.getElementById('organize-now') as HTMLButtonElement;
+      if (button) {
+        button.disabled = true;
+        button.textContent = 'Organizing...';
+      }
+      
+      try {
+        const result = await window.electronAPI.organizeFiles();
+        if (result.success) {
+          await window.electronAPI.showNotification(
+            'Organization Complete',
+            `${result.movedFiles} files have been organized`
+          );
+        } else {
+          await window.electronAPI.showNotification(
+            'Organization Failed',
+            result.error || 'Unknown error occurred'
+          );
+        }
+      } catch (error) {
+        errorLog('Failed to organize files:', error);
+      } finally {
+        if (button) {
+          button.textContent = 'Organize Now';
+        }
+        await this.updateInboxCount();
+      }
+    });
+    
+    // Reorganize all button
+    document.getElementById('reorganize-all')?.addEventListener('click', async () => {
+      const button = document.getElementById('reorganize-all') as HTMLButtonElement;
+      
+      // Confirm with user since this is a major operation
+      const confirmDialog = confirm(
+        'This will analyze ALL files in your File Wrangler folder and reorganize them for optimal categorization.\n\n' +
+        'Files may be moved to different categories based on the overall document collection.\n\n' +
+        'Do you want to continue?'
+      );
+      
+      if (!confirmDialog) {
+        return;
+      }
+      
+      if (button) {
+        button.disabled = true;
+        button.textContent = '🔄 Reorganizing...';
+      }
+      
+      try {
+        const result = await window.electronAPI.reorganizeAllFiles();
+        if (result.success) {
+          await window.electronAPI.showNotification(
+            'Reorganization Complete',
+            `${result.movedFiles} files have been reorganized into optimal folders`
+          );
+        } else {
+          await window.electronAPI.showNotification(
+            'Reorganization Failed',
+            result.error || 'Unknown error occurred'
+          );
+        }
+      } catch (error) {
+        errorLog('Failed to reorganize files:', error);
+      } finally {
+        if (button) {
+          button.textContent = '🔄 Reorganize All Files';
+        }
+        await this.updateInboxCount();
+      }
     });
     
     // Close modal on background click
@@ -225,6 +355,8 @@ class PDFRenamerApp {
             } else {
               activity.message = `Renamed successfully`;
             }
+            // Update inbox count after successful processing
+            this.updateInboxCount();
             break;
           case 'error':
             activity.message = `Error: ${data.error || 'Unknown error'}`;
@@ -234,6 +366,31 @@ class PDFRenamerApp {
         this.updateActivityList();
       }
     });
+    
+    // Listen for organization status updates
+    window.electronAPI.onOrganizationStatus(async (data) => {
+      if (data.status === 'complete') {
+        await this.updateInboxCount();
+      }
+    });
+    
+    // Listen for pipeline state changes
+    window.electronAPI.onPipelineStateChanged((states) => {
+      this.pipelineStates = states;
+      this.updateButtonStates();
+    });
+  }
+  
+  private async updateInboxCount() {
+    try {
+      const count = await window.electronAPI.getInboxCount();
+      const inboxCountEl = document.getElementById('inbox-count');
+      if (inboxCountEl) {
+        inboxCountEl.textContent = `${count} file${count !== 1 ? 's' : ''} in inbox`;
+      }
+    } catch (error) {
+      errorLog('Failed to update inbox count:', error);
+    }
   }
   
   private addActivity(activity: ActivityItem) {
@@ -323,7 +480,7 @@ document.addEventListener('DOMContentLoaded', () => {
     appIcon.src = iconPath;
   }
   
-  const app = new PDFRenamerApp();
+  new PDFRenamerApp();
   
   // Add debug logging
   window.electronAPI.onDebugLog((message: string) => {

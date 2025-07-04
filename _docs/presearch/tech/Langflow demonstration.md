@@ -1,0 +1,29 @@
+# Langflow
+- presenter: Melissa Herrera (@MelGoesTech | in:herrera-melissa)
+	- melissa.herrera@datastax.com
+- what is it?
+	- _visual-first_, but not visual-only agent development platform
+		- code is fully exposed
+		- can build custom components with code
+	- python-native
+	- includes mcp, agents, RAG
+	- does **not** include visibility (but can connect to Langchain for that)
+	- Agent component
+		- model is configurable, as are agent instructions and tools
+	- Multi-agent Orchestration
+		- see demo...
+- vs. n8n or Langgraph?
+	- n8n is more focused at the ops level Langflow is more focused at the agent level
+- tools
+	- _Composio_... useful tool for doing integrations via a single api key (eg., Google OAuth)
+		- in demo, she made `GMAIL_SEND_EMAIL` out of this tool
+- MCP
+	- Langflow has an MCP server tool...
+		- agents can use MCP to understand other tools
+		- Langflow can be used to _export MCP servers_ linking tools and understanding to agents like Claude
+	- "both an MCP builder and an MCP aggregator"
+- deployed with Render, Docker, etc.
+	- check their videos
+- a2a protocol: allow agents to change each other's prompts?
+	- not something Langflow supports yet
+  
