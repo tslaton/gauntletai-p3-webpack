@@ -326,22 +326,24 @@ This is a FULL REORGANIZATION - you are looking at ALL files to create the best 
 Guidelines:
 1. Create a SINGLE-LEVEL folder structure (NO subcategories)
 2. Analyze ALL files holistically to determine the best categories
-3. Create 5-12 categories that best fit the actual documents you see
+3. Create 10-15 categories that best fit the actual documents you see
 4. Some files may need to move to different categories for better organization
 5. Standard categories to consider:
-   - utilities (electric, gas, water, internet, phone bills)
-   - insurance (all insurance policies and claims)
-   - medical (health records, test results, prescriptions)
-   - property (real estate, home documents)
-   - receipts (purchase receipts, invoices, shipping labels)
-   - travel (bookings, itineraries, rental agreements)
-   - work (employment documents, pay stubs)
-   - legal (contracts, notices, legal documents)
-   - personal (certificates, licenses, IDs)
-   - financial (ONLY for bank statements, investment docs, tax forms)
-6. You may create new categories if they better fit the documents
-7. Aim for balanced categories - avoid having one category with 90% of files
-8. Consider document relationships - related documents should be in the same category
+   - services (electric, gas, water, internet, phone bills, etc.)
+   - insurance (all insurance policies and claims, etc.)
+   - medical (health records, test results, prescriptions, etc.)
+   - property (real estate, home documents, mortgage statements, closing documents,etc.)
+   - receipts (purchase receipts, invoices, shipping labels, etc.)
+   - travel (bookings, itineraries, rental agreements, etc.)
+   - work (employment documents, pay stubs, etc.)
+   - legal (contracts, notices, legal documents, jury summons, government-related stuff, etc.)
+   - personal (licenses, IDs, etc.)
+   - financial (ONLY for bank statements, investment documents, tax documents, etc.)
+   - other (anything that doesn't fit into the other categories)
+6. IMPORTANT: "financial" is a LOW PRIORITY category. Only use it if no higher priority category fits.
+7. Consider the title, categoryHint, and tags when reorganizing
+8. You may create new categories if they better fit the documents
+9. Consider document relationships - related documents should be in the same category
 
 CRITICAL: You MUST use the EXACT filename provided. Preserve it exactly.
 
@@ -356,24 +358,23 @@ Return a JSON array for ALL files, even if some don't need to move.`
 
 Guidelines:
 1. Create a SINGLE-LEVEL folder structure (NO subcategories)
-2. Use 8-15 main categories that cover all document types
+2. Use 10-15 main categories that cover all document types
 3. Use clear, intuitive folder names that an average person would understand
 4. Each document goes into exactly ONE folder
 5. Suggested categories (in order of priority):
-   - utilities (electric, gas, water, internet, phone bills)
-   - insurance (all insurance policies and claims)
-   - medical (health records, test results, prescriptions)
-   - property (real estate, home documents)
-   - receipts (purchase receipts, invoices, shipping labels)
-   - travel (bookings, itineraries, rental agreements)
-   - work (employment documents, pay stubs)
-   - legal (contracts, notices, legal documents)
-   - personal (certificates, licenses, IDs)
-   - financial (ONLY for bank statements, investment docs, tax forms - use as LAST RESORT)
+   - services (electric, gas, water, internet, phone bills, etc.)
+   - insurance (all insurance policies and claims, etc.)
+   - medical (health records, test results, prescriptions, etc.)
+   - property (real estate, home documents, mortgage statements, closing documents,etc.)
+   - receipts (purchase receipts, invoices, shipping labels, etc.)
+   - travel (bookings, itineraries, rental agreements, etc.)
+   - work (employment documents, pay stubs, etc.)
+   - legal (contracts, notices, legal documents, jury summons, government-related stuff, etc.)
+   - personal (licenses, IDs, etc.)
+   - financial (ONLY for bank statements, investment documents, tax documents, etc.)
    - other (anything that doesn't fit into the other categories)
 6. IMPORTANT: "financial" is a LOW PRIORITY category. Only use it if no higher priority category fits.
-7. Bills and statements should go to their specific service category (utilities, insurance, etc.) NOT financial
-8. Consider the categoryHint and tags when organizing
+7. Consider the title, categoryHint, and tags when organizing
 
 CRITICAL: You MUST use the EXACT filename provided in the input. Do not modify, shorten, or change the filename in any way.
 
