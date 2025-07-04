@@ -99,6 +99,59 @@ body {
   white-space: nowrap;
 }
 
+.organization-controls {
+  background-color: #fff;
+  padding: 1.5rem;
+  border-radius: 8px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  margin-bottom: 1rem;
+}
+
+.organization-controls h2 {
+  font-size: 1.2rem;
+  margin-bottom: 1rem;
+  color: #333;
+}
+
+.org-info {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 1rem;
+}
+
+.inbox-count {
+  font-size: 0.9rem;
+  color: #666;
+}
+
+.org-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.org-buttons {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.btn-warning {
+  background-color: #f39c12;
+  border: 1px solid #e67e22;
+}
+
+.btn-warning:hover {
+  background-color: #e67e22;
+  border-color: #d35400;
+}
+
+.btn-warning:disabled {
+  background-color: #f7dc6f;
+  border-color: #f4d03f;
+}
+
 .processing-list {
   background-color: #fff;
   padding: 1.5rem;
