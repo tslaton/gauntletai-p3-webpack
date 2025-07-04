@@ -45,6 +45,11 @@ let directoryCleanupTimer: NodeJS.Timeout | null = null;
 let pdfPipeline: ReturnType<typeof createPDFPipeline> | null = null;
 let currentPipelineConfig = { openaiApiKey: '', llmModel: '', useLowercase: true, processingMode: 'accuracy' };
 
+// Pipeline running states
+let isPdfPipelineRunning = false;
+let isOrganizationPipelineRunning = false;
+let isReorganizationPipelineRunning = false;
+
 // Configuration
 let WATCH_FOLDER = (store as any).get('watchFolder', path.join(os.homedir(), 'Documents', 'inbox')) as string;
 let OPENAI_API_KEY = process.env.OPENAI_API_KEY || (store as any).get('openaiApiKey', '') as string;
@@ -110,6 +115,13 @@ const createWindow = () => {
   mainWindow.webContents.on('did-finish-load', () => {
     console.log('[Main] Renderer did-finish-load event');
     mainWindow?.webContents.send('debug-log', 'Renderer loaded (did-finish-load)');
+    
+    // Send initial pipeline states
+    mainWindow?.webContents.send('pipeline-state-changed', {
+      isPdfPipelineRunning,
+      isOrganizationPipelineRunning,
+      isReorganizationPipelineRunning
+    });
   });
   
   mainWindow.webContents.on('dom-ready', () => {
@@ -604,6 +616,12 @@ ipcMain.handle('process-pdf', async (_event, filePath: string) => {
 ipcMain.handle('organize-files', async () => {
   try {
     devLog('Starting file organization');
+    isOrganizationPipelineRunning = true;
+    mainWindow?.webContents.send('pipeline-state-changed', {
+      isPdfPipelineRunning,
+      isOrganizationPipelineRunning,
+      isReorganizationPipelineRunning
+    });
     mainWindow?.webContents.send('organization-status', { status: 'starting' });
     
     // Create organization pipelines
@@ -645,6 +663,13 @@ ipcMain.handle('organize-files', async () => {
       error: error instanceof Error ? error.message : 'Unknown error' 
     });
     return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
+  } finally {
+    isOrganizationPipelineRunning = false;
+    mainWindow?.webContents.send('pipeline-state-changed', {
+      isPdfPipelineRunning,
+      isOrganizationPipelineRunning,
+      isReorganizationPipelineRunning
+    });
   }
 });
 
@@ -663,9 +688,21 @@ ipcMain.handle('get-inbox-count', async () => {
   }
 });
 
+ipcMain.handle('get-pipeline-states', () => ({
+  isPdfPipelineRunning,
+  isOrganizationPipelineRunning,
+  isReorganizationPipelineRunning
+}));
+
 ipcMain.handle('reorganize-all-files', async () => {
   try {
     devLog('Starting full file reorganization');
+    isReorganizationPipelineRunning = true;
+    mainWindow?.webContents.send('pipeline-state-changed', {
+      isPdfPipelineRunning,
+      isOrganizationPipelineRunning,
+      isReorganizationPipelineRunning
+    });
     mainWindow?.webContents.send('organization-status', { status: 'starting', isReorganization: true });
     
     // Create organization pipelines
@@ -710,6 +747,13 @@ ipcMain.handle('reorganize-all-files', async () => {
       isReorganization: true 
     });
     return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
+  } finally {
+    isReorganizationPipelineRunning = false;
+    mainWindow?.webContents.send('pipeline-state-changed', {
+      isPdfPipelineRunning,
+      isOrganizationPipelineRunning,
+      isReorganizationPipelineRunning
+    });
   }
 });
 
@@ -791,6 +835,13 @@ async function checkAutoOrganize() {
       }).show();
       
       // Trigger organization
+      isOrganizationPipelineRunning = true;
+      mainWindow?.webContents.send('pipeline-state-changed', {
+        isPdfPipelineRunning,
+        isOrganizationPipelineRunning,
+        isReorganizationPipelineRunning
+      });
+      
       const { organization: organizationPipeline } = createOrganizationPipeline(OPENAI_API_KEY, LLM_MODEL, USE_LOWERCASE);
       const initialState: OrganizationState = {
         watchFolder: WATCH_FOLDER,
@@ -816,9 +867,22 @@ async function checkAutoOrganize() {
           body: `${result.movedFiles} files have been organized into folders`
         }).show();
       }
+      
+      isOrganizationPipelineRunning = false;
+      mainWindow?.webContents.send('pipeline-state-changed', {
+        isPdfPipelineRunning,
+        isOrganizationPipelineRunning,
+        isReorganizationPipelineRunning
+      });
     }
   } catch (error) {
     errorLog('Error checking auto-organize:', error);
+    isOrganizationPipelineRunning = false;
+    mainWindow?.webContents.send('pipeline-state-changed', {
+      isPdfPipelineRunning,
+      isOrganizationPipelineRunning,
+      isReorganizationPipelineRunning
+    });
   }
 }
 
@@ -851,19 +915,27 @@ async function processQueue() {
 
 // Helper function to process PDF
 async function processPDFFile(filePath: string) {
-  const pipeline = initializePipeline();
+  isPdfPipelineRunning = true;
+  mainWindow?.webContents.send('pipeline-state-changed', {
+    isPdfPipelineRunning,
+    isOrganizationPipelineRunning,
+    isReorganizationPipelineRunning
+  });
   
-  const initialState: PDFState = {
-    path: filePath
-  };
-  
-  let currentState: PDFState = initialState;
-  
-  // Send initial state
-  mainWindow?.webContents.send('processing-update', { ...currentState });
-  
-  // Run the pipeline
-  const stream = await pipeline.stream(initialState as any);
+  try {
+    const pipeline = initializePipeline();
+    
+    const initialState: PDFState = {
+      path: filePath
+    };
+    
+    let currentState: PDFState = initialState;
+    
+    // Send initial state
+    mainWindow?.webContents.send('processing-update', { ...currentState });
+    
+    // Run the pipeline
+    const stream = await pipeline.stream(initialState as any);
   
   for await (const chunk of stream) {
     // Update state with each step's output
@@ -928,6 +1000,14 @@ async function processPDFFile(filePath: string) {
     if (!fileWranglerWatcher) {
       setupFileWranglerWatcher();
     }
+  }
+  } finally {
+    isPdfPipelineRunning = false;
+    mainWindow?.webContents.send('pipeline-state-changed', {
+      isPdfPipelineRunning,
+      isOrganizationPipelineRunning,
+      isReorganizationPipelineRunning
+    });
   }
 }
 
